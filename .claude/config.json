@@ -1,0 +1,34 @@
+{
+  "auto_approve_tools": [
+    {
+      "tool": "Bash",
+      "pattern": "(ls|pwd|cat|head|tail|grep|find|git status|git log|git diff|git branch|which|whoami|echo|env).*",
+      "description": "Auto-approve safe read-only bash commands"
+    },
+    {
+      "tool": "Bash",
+      "pattern": "pytest.*",
+      "description": "Auto-approve all pytest commands"
+    },
+    {
+      "tool": "Bash",
+      "pattern": "alembic.*",
+      "description": "Auto-approve Alembic migration commands"
+    },
+    {
+      "tool": "Bash",
+      "pattern": ".*pip install.*",
+      "description": "Auto-approve pip install commands"
+    },
+    {
+      "tool": "Read",
+      "pattern": ".*",
+      "description": "Auto-approve reading any files in the project"
+    },
+    {
+      "tool": "WebSearch",
+      "pattern": ".*",
+      "description": "Auto-approve all web searches"
+    }
+  ]
+}
