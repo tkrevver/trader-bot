@@ -1,0 +1,23 @@
+meta {
+  name: Pause Job
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/scheduler/jobs/data_ingestion/pause
+  body: none
+  auth: none
+}
+
+docs {
+  Pause a scheduled job
+
+  Valid job IDs:
+  - data_ingestion
+  - gap_detection
+  - data_health_check
+  - refresh_materialized_views
+
+  Paused jobs will not run until resumed
+}

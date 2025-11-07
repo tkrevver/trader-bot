@@ -1,0 +1,16 @@
+meta {
+  name: Detailed Health Check
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/health/detailed
+  body: none
+  auth: none
+}
+
+docs {
+  Detailed health check with component status
+  Shows database, scheduler, polygon, and broker health
+}

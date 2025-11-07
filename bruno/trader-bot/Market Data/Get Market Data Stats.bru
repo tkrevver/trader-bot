@@ -1,0 +1,23 @@
+meta {
+  name: Get Market Data Stats
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/api/v1/market-data/:symbol/stats
+  body: none
+  auth: none
+}
+
+params:path {
+  symbol: SPY
+}
+
+docs {
+  Get statistics about market data for a symbol
+  
+  Returns:
+  - bar_counts for different time ranges (24h, 7d, 30d, total)
+  - latest_bar info (time, close, volume)
+}

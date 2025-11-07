@@ -1,0 +1,26 @@
+meta {
+  name: Get Latest Bar
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/market-data/:symbol/latest?timeframe=1min
+  body: none
+  auth: none
+}
+
+params:query {
+  timeframe: 1min
+}
+
+params:path {
+  symbol: SPY
+}
+
+docs {
+  Get the latest OHLCV bar for a symbol
+  
+  Query params:
+  - timeframe: 1min, 5min, 15min, 30min, or daily (default: 1min)
+}

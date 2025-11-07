@@ -1,0 +1,37 @@
+meta {
+  name: Backfill Historical Data
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/market-data/:symbol/backfill?start_date=2025-11-01T00:00:00&end_date=2025-11-07T23:59:59
+  body: none
+  auth: none
+}
+
+params:query {
+  start_date: 2025-11-01T00:00:00
+  end_date: 2025-11-07T23:59:59
+}
+
+params:path {
+  symbol: SPY
+}
+
+docs {
+  Manually trigger backfill of historical data from Polygon.io
+  
+  Query params (both required):
+  - start_date: Start date for backfill (ISO format)
+  - end_date: End date for backfill (ISO format)
+  
+  Max range: 30 days
+  
+  Returns:
+  - symbol
+  - start_date
+  - end_date
+  - bars_inserted
+  - success
+}

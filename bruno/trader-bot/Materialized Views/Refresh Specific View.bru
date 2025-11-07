@@ -1,0 +1,26 @@
+meta {
+  name: Refresh Specific View
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/market-data/views/refresh?view_name=ohlcv_5min&concurrently=true
+  body: none
+  auth: none
+}
+
+params:query {
+  view_name: ohlcv_5min
+  concurrently: true
+}
+
+docs {
+  Refresh a specific materialized view
+
+  Valid view names:
+  - ohlcv_5min
+  - ohlcv_15min
+  - ohlcv_30min
+  - ohlcv_daily
+}

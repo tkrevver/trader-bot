@@ -1,0 +1,29 @@
+meta {
+  name: Get Scheduler Status
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/scheduler/status
+  body: none
+  auth: none
+}
+
+docs {
+  Get scheduler status and job information
+
+  Returns:
+  - running: Boolean indicating if scheduler is running
+  - jobs: List of scheduled jobs with:
+    - id
+    - name
+    - next_run_time
+    - trigger
+
+  Jobs:
+  - data_ingestion: Runs every minute at :05 seconds
+  - gap_detection: Runs hourly at :10 past the hour
+  - data_health_check: Runs every 15 minutes
+  - refresh_materialized_views: Runs every 5 minutes
+}

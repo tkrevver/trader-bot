@@ -1,0 +1,25 @@
+meta {
+  name: Get View Stats
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/market-data/views/stats
+  body: none
+  auth: none
+}
+
+docs {
+  Get statistics about materialized views
+
+  Returns for each view:
+  - row_count: Number of rows
+  - size: Storage size (human readable)
+
+  Views:
+  - ohlcv_5min (5-minute bars)
+  - ohlcv_15min (15-minute bars)
+  - ohlcv_30min (30-minute bars)
+  - ohlcv_daily (daily bars)
+}

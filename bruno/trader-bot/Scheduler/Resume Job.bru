@@ -1,0 +1,23 @@
+meta {
+  name: Resume Job
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/scheduler/jobs/data_ingestion/resume
+  body: none
+  auth: none
+}
+
+docs {
+  Resume a paused job
+
+  Valid job IDs:
+  - data_ingestion
+  - gap_detection
+  - data_health_check
+  - refresh_materialized_views
+
+  Resumed jobs will start running on their normal schedule
+}

@@ -1,0 +1,34 @@
+meta {
+  name: Get Historical Bars
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/market-data/:symbol/history?timeframe=1min&limit=100&start_time=2025-11-01T00:00:00&end_time=2025-11-07T23:59:59
+  body: none
+  auth: none
+}
+
+params:query {
+  timeframe: 1min
+  limit: 100
+  start_time: 2025-11-01T00:00:00
+  end_time: 2025-11-07T23:59:59
+}
+
+params:path {
+  symbol: SPY
+}
+
+docs {
+  Get historical OHLCV bars for a symbol
+  
+  Query params:
+  - timeframe: 1min, 5min, 15min, 30min, or daily (default: 1min)
+  - limit: Max number of bars (default: 100, max: 5000)
+  - start_time: Start time (ISO format, optional)
+  - end_time: End time (ISO format, optional)
+  
+  If start_time not provided, defaults to 24 hours ago
+}

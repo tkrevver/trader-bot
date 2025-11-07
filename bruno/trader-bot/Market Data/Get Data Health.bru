@@ -1,0 +1,33 @@
+meta {
+  name: Get Data Health
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/api/v1/market-data/:symbol/health?hours_back=24
+  body: none
+  auth: none
+}
+
+params:query {
+  hours_back: 24
+}
+
+params:path {
+  symbol: SPY
+}
+
+docs {
+  Get data health check for a symbol
+  
+  Query params:
+  - hours_back: Number of hours to check (1-168, default: 24)
+  
+  Returns:
+  - bar_count
+  - gap_count
+  - latest_bar_time
+  - healthy (boolean)
+  - gaps (list of detected gaps)
+}

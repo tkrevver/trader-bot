@@ -1,0 +1,28 @@
+meta {
+  name: Refresh All Views
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/market-data/views/refresh?concurrently=true
+  body: none
+  auth: none
+}
+
+params:query {
+  concurrently: true
+  ~view_name:
+}
+
+docs {
+  Manually refresh materialized views for aggregated timeframes
+
+  Query params:
+  - view_name: Optional specific view (ohlcv_5min, ohlcv_15min, ohlcv_30min, ohlcv_daily)
+  - concurrently: Use CONCURRENT refresh (default: true)
+
+  Views are auto-refreshed every 5 minutes by scheduler during market hours
+
+  Refreshes: 5min, 15min, 30min, and daily aggregated views
+}
