@@ -1,5 +1,46 @@
+# Web Framework
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
+python-multipart==0.0.18
+websockets==13.1
+
+# Database
+asyncpg==0.30.0
+alembic==1.14.0
+psycopg2-binary==2.9.10
+
+# Data Validation & Settings
 pydantic==2.10.3
 pydantic-settings==2.6.1
-python-multipart==0.0.18
+
+# Async HTTP Client
+httpx==0.28.1
+
+# Task Scheduling
+APScheduler==3.10.4
+
+# Data Analysis
+pandas>=2.2.3
+numpy>=2.2.6
+
+# Technical Indicators
+pandas-ta>=0.4.71b0
+
+# Date/Time
+pytz==2024.2
+python-dateutil==2.9.0.post0
+
+# Logging
+python-json-logger==3.2.1
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.24.0
+pytest-cov==6.0.0
+
+# Code Quality
+black==24.10.0
+ruff==0.8.4
+
+# Environment
+python-dotenv==1.0.1
