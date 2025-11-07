@@ -178,29 +178,53 @@ async def check_for_gaps(
 @router.post("/{symbol}/backfill")
 async def backfill_data(
     symbol: str,
-    start_date: datetime = Query(
-        ...,
-        description="Start date for backfill"
+    start_date: Optional[datetime] = Query(
+        None,
+        description="Start date for backfill (required if days not provided)"
     ),
-    end_date: datetime = Query(
-        ...,
-        description="End date for backfill"
+    end_date: Optional[datetime] = Query(
+        None,
+        description="End date for backfill (required if days not provided)"
+    ),
+    days: Optional[int] = Query(
+        None,
+        description="Number of days to backfill from today (alternative to start_date/end_date)",
+        ge=1,
+        le=30
     )
 ):
     """
     Backfill historical data for a symbol.
 
-    This endpoint triggers a manual backfill of historical data from Polygon.io.
+    This endpoint triggers a manual backfill of historical data from Polygon.io
+    and automatically detects and fills any gaps in the data.
+
+    You can specify dates in two ways:
+    1. Explicit dates: Provide both start_date and end_date
+    2. Days back: Provide days parameter (e.g., days=7 for last 7 days)
 
     Args:
         symbol: Trading symbol (e.g., "SPY")
-        start_date: Start date for backfill
-        end_date: End date for backfill
+        start_date: Start date for backfill (optional if using days)
+        end_date: End date for backfill (optional if using days)
+        days: Number of days to backfill from today (optional if using start_date/end_date)
 
     Returns:
-        dict: Backfill results
+        dict: Backfill results including gap detection
     """
     try:
+        # Calculate dates based on input
+        if days is not None:
+            # Use days parameter
+            end_date = datetime.utcnow()
+            start_date = end_date - timedelta(days=days)
+        elif start_date is None or end_date is None:
+            # Neither days nor both dates provided
+            raise HTTPException(
+                status_code=400,
+                detail="Either provide 'days' parameter OR both 'start_date' and 'end_date'"
+            )
+
         logger.info(
             "Manual backfill triggered",
             extra={
@@ -233,11 +257,26 @@ async def backfill_data(
             end_date=end_date
         )
 
+        # Always check for gaps to ensure data completeness
+        gaps = await data_ingestion.detect_and_backfill_gaps(
+            symbol=symbol.upper(),
+            days_back=(end_date - start_date).days
+        )
+
         return {
             "symbol": symbol.upper(),
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
             "bars_inserted": count,
+            "gaps_found": len(gaps),
+            "gaps": [
+                {
+                    "start_time": gap.start_time.isoformat(),
+                    "end_time": gap.end_time.isoformat(),
+                    "missing_bars": gap.missing_bars
+                }
+                for gap in gaps
+            ],
             "success": count > 0
         }
 

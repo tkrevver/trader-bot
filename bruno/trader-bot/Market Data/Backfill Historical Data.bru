@@ -5,14 +5,15 @@ meta {
 }
 
 post {
-  url: {{baseUrl}}/api/v1/market-data/:symbol/backfill?start_date=2025-11-01T00:00:00&end_date=2025-11-07T23:59:59
+  url: {{baseUrl}}/api/v1/market-data/:symbol/backfill?days=7
   body: none
   auth: none
 }
 
 params:query {
-  start_date: 2025-11-01T00:00:00
-  end_date: 2025-11-07T23:59:59
+  days: 7
+  ~start_date: 2025-11-01T00:00:00
+  ~end_date: 2025-11-07T23:59:59
 }
 
 params:path {
@@ -21,17 +22,26 @@ params:path {
 
 docs {
   Manually trigger backfill of historical data from Polygon.io
-  
-  Query params (both required):
-  - start_date: Start date for backfill (ISO format)
-  - end_date: End date for backfill (ISO format)
-  
+
+  Automatically detects and fills any gaps in the data.
+
+  Two ways to specify date range:
+  1. Days back (EASIER): Use days parameter (e.g., days=7)
+  2. Explicit dates: Use start_date and end_date (uncomment in params)
+
+  Query params:
+  - days: Number of days to backfill from today (1-30, optional if using dates)
+  - start_date: Start date for backfill (ISO format, optional if using days)
+  - end_date: End date for backfill (ISO format, optional if using days)
+
   Max range: 30 days
-  
+
   Returns:
   - symbol
   - start_date
   - end_date
   - bars_inserted
+  - gaps_found
+  - gaps[] (array of gap details)
   - success
 }
