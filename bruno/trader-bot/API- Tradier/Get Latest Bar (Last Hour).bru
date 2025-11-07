@@ -1,0 +1,31 @@
+meta {
+  name: Get Latest Bar (Last Hour)
+  type: http
+  seq: 2
+}
+
+get {
+  url: https://api.tradier.com/v1/markets/timesales?symbol=SPY&interval=1min&session_filter=open
+  body: none
+  auth: inherit
+}
+
+params:query {
+  symbol: SPY
+  interval: 1min
+  session_filter: open
+}
+
+docs {
+  Get the latest 1-minute bars (last hour of data)
+  
+  This request fetches recent bars without specifying start/end dates.
+  Tradier will return the most recent data available.
+  
+  Use this to quickly check:
+  - What timestamp is Tradier returning?
+  - Is the data real-time or delayed?
+  - What's the latest bar available?
+  
+  The last item in the response array is the most recent bar.
+}

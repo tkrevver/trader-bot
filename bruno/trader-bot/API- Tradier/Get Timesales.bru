@@ -1,0 +1,54 @@
+meta {
+  name: Get Timesales
+  type: http
+  seq: 1
+}
+
+get {
+  url: https://api.tradier.com/v1/markets/timesales?symbol=SPY&interval=1min&start=2025-11-07 09:30&end=2025-11-07 16:00&session_filter=open
+  body: none
+  auth: inherit
+}
+
+params:query {
+  symbol: SPY
+  interval: 1min
+  start: 2025-11-07 09:30
+  end: 2025-11-07 16:00
+  session_filter: open
+}
+
+docs {
+  Get time and sales (OHLCV bars) from Tradier
+  
+  This is the raw Tradier API endpoint that our app uses.
+  
+  Parameters:
+  - symbol: Stock symbol (e.g., SPY)
+  - interval: tick, 1min, 5min, 15min
+  - start: Start date/time (YYYY-MM-DD HH:MM)
+  - end: End date/time (YYYY-MM-DD HH:MM)
+  - session_filter: "open" (market hours) or "all" (extended hours)
+  
+  Data Available:
+  - 1min: 20 days (open), 10 days (all)
+  - 5min: 40 days (open), 18 days (all)
+  - 15min: 40 days (open), 18 days (all)
+  
+  Response format:
+  {
+    "series": {
+      "data": [
+        {
+          "time": "2025-11-07T09:31:00",
+          "timestamp": 1730984460,
+          "open": 583.45,
+          "high": 583.98,
+          "low": 583.40,
+          "close": 583.75,
+          "volume": 125000
+        }
+      ]
+    }
+  }
+}

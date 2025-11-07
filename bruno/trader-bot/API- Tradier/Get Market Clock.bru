@@ -1,0 +1,28 @@
+meta {
+  name: Get Market Clock
+  type: http
+  seq: 4
+}
+
+get {
+  url: https://api.tradier.com/v1/markets/clock
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{tradierApiToken}}
+}
+
+docs {
+  Get current market status
+
+  Returns:
+  - date: Current date
+  - state: "open", "closed", "premarket", "postmarket"
+  - timestamp: Current timestamp
+  - next_change: When market status will change
+  - next_state: What the next state will be
+
+  Useful for verifying market hours detection.
+}

@@ -1,0 +1,31 @@
+meta {
+  name: Get Quotes
+  type: http
+  seq: 3
+}
+
+get {
+  url: https://api.tradier.com/v1/markets/quotes?symbols=SPY
+  body: none
+  auth: inherit
+}
+
+params:query {
+  symbols: SPY
+}
+
+docs {
+  Get current quote for a symbol
+  
+  Returns real-time quote data including:
+  - Bid/Ask prices
+  - Last trade price and time
+  - Volume
+  - Open/High/Low/Close
+  - Change and percent change
+  
+  Useful for checking:
+  - Current market price
+  - If Tradier connection is working
+  - If data is real-time
+}
