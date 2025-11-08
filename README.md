@@ -4,6 +4,7 @@ An automated day/swing trading bot built with FastAPI, PostgreSQL, and Python. D
 
 ## Features
 
+### Data Infrastructure
 - **Multiple Data Providers**: Pluggable architecture supporting Tradier and Alpaca Markets
   - **Tradier**: Real-time data, $10/month (20 days historical)
   - **Alpaca**: FREE tier with 5+ years historical data + VWAP
@@ -13,13 +14,31 @@ An automated day/swing trading bot built with FastAPI, PostgreSQL, and Python. D
 - **Scheduled Data Collection**: APScheduler for automated data ingestion every minute during market hours
 - **Gap Detection**: Automatic detection and backfilling of missing data
 - **Timezone-Aware**: All timestamps in configured timezone (Eastern Time for US markets)
-- **Broker Agnostic**: Supports Tastytrade, Tradier, and paper trading
+
+### Strategy Framework
+- **Modular Strategy Architecture**: Pluggable strategies loaded from `strategies/` folder
+- **Multi-Timeframe Support**: Process multiple timeframes (e.g., 1min and 5min) simultaneously
+- **State Management**: Per-symbol position and custom state tracking
+- **13+ Technical Indicators**: SMA, EMA, RSI, MACD, Bollinger Bands, ATR, VWAP, Stochastic, ADX, and more
+- **Indicator Caching**: 60-second TTL cache to avoid redundant calculations
+- **Reference Strategy**: Opening Range Breakout implementation included
+
+### Backtesting Engine
+- **Event-Driven Backtesting**: Bar-by-bar historical replay with realistic execution
+- **Realistic Slippage**: Configurable basis points slippage simulation
+- **Commission Support**: Per-share or percentage-based commission
+- **25+ Performance Metrics**: Total return, CAGR, Sharpe ratio, Sortino ratio, max drawdown, win rate, profit factor, etc.
+- **Detailed Trade Analysis**: Entry/exit pairing, holding periods, win/loss classification
+- **Equity Curve Tracking**: Cash and positions value snapshots over time
+
+### Infrastructure
+- **Broker Agnostic**: Supports Tastytrade, Tradier, and paper trading (live trading not yet implemented)
 - **REST API**: FastAPI-based API with automatic documentation
-- **Testing**: Comprehensive pytest test suite with 90%+ coverage
+- **Testing**: Comprehensive pytest test suite with 88 passing tests
 
 ## Project Status
 
-**Week 1-2 Complete** ✓
+**Weeks 1-2 (Data Infrastructure)** ✓
 - ✅ Database setup (PostgreSQL with native partitioning)
 - ✅ Project structure
 - ✅ Configuration management
@@ -35,14 +54,27 @@ An automated day/swing trading bot built with FastAPI, PostgreSQL, and Python. D
 - ✅ Market hours validation
 - ✅ **5+ years historical data access** (via Alpaca FREE tier)
 
-**Next Steps** (Week 3-8)
-- Strategy framework
-- Technical indicators
-- Signal generation
-- Risk management & order execution
-- Broker integrations for live trading
-- Backtesting engine
-- Performance analytics
+**Week 3 (Strategy Framework)** ✓
+- ✅ Abstract strategy base class with multi-timeframe support
+- ✅ Dynamic strategy loader from `strategies/` folder
+- ✅ Per-symbol state management
+- ✅ Opening Range Breakout reference implementation
+- ✅ 13+ technical indicators via pandas-ta
+- ✅ Feature engine with indicator caching (60s TTL)
+
+**Week 6 (Backtesting Engine)** ✓
+- ✅ Event-driven backtest orchestration
+- ✅ Position tracking with realistic slippage and commission
+- ✅ 25+ performance metrics calculator
+- ✅ Detailed trade analysis with entry/exit pairing
+- ✅ REST API endpoints for running and analyzing backtests
+- ✅ Comprehensive test suite (88 tests passing)
+
+**Next Steps** (Weeks 4-5, 7-8)
+- Week 4: Signal generation and database storage
+- Week 5: Risk management framework
+- Week 7: Order execution via broker APIs
+- Week 8: Live trading deployment with paper trading validation
 
 ## Architecture
 
@@ -152,26 +184,39 @@ Once the server is running:
 - `POST /api/v1/scheduler/jobs/{job_id}/pause` - Pause a scheduled job
 - `POST /api/v1/scheduler/jobs/{job_id}/resume` - Resume a paused job
 
+### Backtesting
+
+- `POST /api/v1/backtest` - Run a backtest with configuration
+- `GET /api/v1/backtest/{backtest_id}` - Get backtest status
+- `GET /api/v1/backtest/{backtest_id}/results` - Get performance metrics
+- `GET /api/v1/backtest/{backtest_id}/trades` - Get all trades
+- `GET /api/v1/backtest/{backtest_id}/equity` - Get equity curve
+- `GET /api/v1/backtest/{backtest_id}/detailed` - Get detailed trade analysis (entry/exit pairs, holding periods, win/loss)
+- `GET /api/v1/backtest` - List all backtests with optional filters
+- `DELETE /api/v1/backtest/{backtest_id}` - Delete a backtest
+
 ### Coming Soon
 
 - Trading control (start/stop)
-- Position management
-- Order history
-- Signal generation
-- Strategy management
-- Backtesting
+- Position management (live trading)
+- Order execution via broker APIs
+- Signal generation and storage
+- Risk management enforcement
 
 ## Database Schema
 
 ### Core Tables
 
-- **ohlcv_1min** - Partitioned table for minute-level OHLCV data (with volume)
-- **trades** - Executed trades log
-- **orders** - Order history
-- **positions** - Current and historical positions
-- **signals** - Strategy signals
-- **strategies** - Strategy configurations
-- **account_snapshots** - Daily account snapshots
+- **ohlcv_1min** - Partitioned table for minute-level OHLCV data (with volume, VWAP, trade count)
+- **backtests** - Backtest metadata, configuration, status, and performance metrics
+- **backtest_trades** - Individual trades from backtests (entry/exit prices, P&L, commission, slippage)
+- **backtest_equity_curve** - Equity snapshots over time for drawdown calculations
+- **trades** - Executed trades log (live trading - not yet implemented)
+- **orders** - Order history (live trading - not yet implemented)
+- **positions** - Current and historical positions (live trading - not yet implemented)
+- **signals** - Strategy signals (not yet implemented)
+- **strategies** - Strategy configurations (not yet implemented)
+- **account_snapshots** - Daily account snapshots (live trading - not yet implemented)
 
 ### Materialized Views
 
@@ -243,24 +288,54 @@ See `.env.example` for all available options.
 trader-bot/
 ├── app/                    # Application code
 │   ├── api/               # REST API endpoints
-│   ├── brokers/           # Broker integrations
+│   │   ├── backtest.py   # Backtest endpoints
+│   │   ├── health.py     # Health check endpoints
+│   │   ├── market_data.py # Market data endpoints
+│   │   ├── scheduler.py  # Scheduler management
+│   │   └── tasks.py      # Admin tasks
+│   ├── brokers/           # Broker integrations (not yet implemented)
 │   ├── db/                # Database layer
+│   │   ├── repositories/ # Data access layer
+│   │   │   ├── backtest.py # Backtest CRUD
+│   │   │   └── market_data.py # OHLCV operations
+│   │   └── partition_manager.py # Auto partition creation
 │   ├── models/            # Pydantic models
-│   ├── services/          # Business logic & data providers
+│   │   ├── backtest.py   # Backtest models
+│   │   └── market_data.py # OHLCV models
+│   ├── services/          # Business logic
+│   │   ├── backtest_metrics.py # 25+ performance metrics
+│   │   ├── backtest_position_tracker.py # Trade execution simulation
+│   │   ├── backtest_runner.py # Event-driven backtest orchestration
 │   │   ├── base_market_data_client.py  # Abstract provider interface
 │   │   ├── tradier_client.py           # Tradier implementation
 │   │   ├── alpaca_client.py            # Alpaca implementation
 │   │   ├── market_data_client_factory.py  # Provider selector
-│   │   └── data_ingestion.py           # Orchestration
+│   │   ├── data_ingestion.py           # Data orchestration
+│   │   └── feature_engine.py           # Indicator caching
 │   ├── strategies/        # Strategy framework
+│   │   ├── base.py       # Abstract Strategy base class
+│   │   └── loader.py     # Dynamic strategy loader
 │   ├── tasks/             # Background tasks
 │   ├── utils/             # Utilities
-│   ├── websockets/        # WebSocket endpoints
+│   │   ├── indicators.py # 13+ technical indicators
+│   │   ├── logger.py     # Structured logging
+│   │   └── market_hours.py # Market hours utilities
+│   ├── websockets/        # WebSocket endpoints (not yet implemented)
 │   └── config.py          # Configuration
 ├── main.py                # FastAPI app (ROOT, not app/)
 ├── alembic/               # Database migrations
-├── strategies/            # User strategies
-├── tests/                 # Tests
+├── strategies/            # User-defined strategies
+│   └── opening_range_breakout.py # Reference implementation
+├── tests/                 # Tests (88 passing)
+│   ├── test_*.py         # Integration tests
+│   └── unit/             # Unit tests
+│       ├── test_backtest_position_tracker.py
+│       ├── test_indicators.py
+│       └── test_strategy_base.py
+├── bruno/trader-bot/      # API request collection
+│   ├── Backtest/         # Backtest API requests
+│   ├── Market Data/      # Market data requests
+│   └── ...
 ├── scripts/               # Utility scripts
 ├── .env                   # Environment config
 ├── requirements.txt       # Dependencies
@@ -272,7 +347,17 @@ trader-bot/
 
 ### Adding Strategies
 
-Strategies will be loaded from the `strategies/` directory. Create a Python file implementing the `Strategy` base class (coming in Week 3).
+Create a new strategy in the `strategies/` directory:
+
+1. Create a Python file (e.g., `strategies/my_strategy.py`)
+2. Inherit from `app.strategies.base.Strategy`
+3. Implement required methods:
+   - `get_metadata()` - Strategy name, description, parameters
+   - `validate_parameters()` - Parameter validation
+   - `on_bar()` - Process market data bars
+   - `generate_signals()` - Generate buy/sell signals
+
+See `strategies/opening_range_breakout.py` for a complete example.
 
 ### Running Tests
 
@@ -329,12 +414,22 @@ For questions or issues, please refer to the `IMPLEMENTATION_PLAN.md` or open an
 
 ---
 
-**Version**: 2.1.0 (Week 1-2 Complete + Multi-Provider Architecture)
+**Version**: 3.0.0 (Strategy Framework + Backtesting Engine)
 **Last Updated**: 2025-11-07
 
 ## Recent Updates
 
-### v2.1.0 - Multi-Provider Data Architecture
+### v3.0.0 - Strategy Framework + Backtesting Engine (Week 3 & 6)
+- ✨ Modular strategy framework with multi-timeframe support
+- 📈 13+ technical indicators (SMA, EMA, RSI, MACD, BBands, ATR, VWAP, etc.)
+- 🔄 Event-driven backtesting engine with realistic slippage and commission
+- 📊 25+ performance metrics (Sharpe ratio, max drawdown, win rate, etc.)
+- 🎯 Opening Range Breakout reference strategy implementation
+- 🧪 Comprehensive test suite (88 tests passing)
+- 🔍 Detailed trade analysis with entry/exit pairing and holding periods
+- 💾 Backtest persistence and retrieval via REST API
+
+### v2.1.0 - Multi-Provider Data Architecture (Week 1-2)
 - ✨ Added Alpaca Markets integration (FREE 5+ years historical data)
 - 🏗️ Implemented pluggable data provider architecture
 - 📊 VWAP and trade count support (Alpaca)

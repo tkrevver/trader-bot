@@ -6,7 +6,7 @@ This document provides comprehensive context about the implemented system for AI
 
 Automated trading bot for day/swing trading strategies. Currently focused on SPY (S&P 500 ETF) with plans to expand to other symbols.
 
-**Current Status:** Week 2 (Data Infrastructure) completed. Real-time data ingestion not working due to API tier limitations (delayed data).
+**Current Status:** Week 2 (Data Infrastructure), Week 3 (Strategy Framework), and Week 6 (Backtesting Engine) completed. Real-time data ingestion working with Tradier API ($10/month for real-time market data).
 
 ## Technology Stack
 
@@ -30,6 +30,18 @@ Automated trading bot for day/swing trading strategies. Currently focused on SPY
 - Partition naming: `ohlcv_1min_YYYY_wWW` (e.g., `ohlcv_1min_2025_w45`)
 - Auto-creates partitions 4 weeks in advance on startup
 - Primary key: `(symbol, time)`
+
+**backtests** - Backtest metadata and results
+- Stores backtest configuration, status, and performance metrics
+- Links to trades and equity curve via foreign keys
+
+**backtest_trades** - Individual trades from backtests
+- Stores entry/exit prices, P&L, commission, slippage
+- Links to parent backtest
+
+**backtest_equity_curve** - Equity snapshots over time
+- Tracks cash, positions value, and total equity
+- Used for calculating drawdowns and visualizing performance
 
 **Schema:**
 ```sql
@@ -88,6 +100,8 @@ def serialize_time(self, dt: datetime) -> str:
 - `OHLCVBar` - Serializes `time` field
 - `MarketDataGap` - Serializes `start_time`, `end_time`, `detected_at` fields
 - `HealthCheckResponse` - Serializes `latest_bar_time` field
+- `TradeDetail` - Serializes `entry_time`, `exit_time` fields
+- `BacktestDetailedResponse` - Serializes `start_date`, `end_date` fields
 
 **Important:** Service layer returns raw `datetime` objects. The API layer uses Pydantic response models (e.g., `LatestBarResponse`, `HealthCheckResponse`) which automatically trigger the field serializers. Never manually convert timestamps to strings in the service layer.
 
@@ -101,6 +115,7 @@ def serialize_time(self, dt: datetime) -> str:
 trader-bot/
 ├── app/
 │   ├── api/                    # API endpoints (thin wrappers, delegate to services)
+│   │   ├── backtest.py        # Backtest endpoints (run, results, detailed analysis)
 │   │   ├── health.py          # Health check endpoints
 │   │   ├── market_data.py     # Market data CRUD + backfill
 │   │   ├── scheduler.py       # Scheduler management
@@ -109,31 +124,43 @@ trader-bot/
 │   │   ├── connection.py      # Database pool management
 │   │   ├── partition_manager.py  # Auto-create partitions
 │   │   └── repositories/      # Data access layer
+│   │       ├── backtest.py    # Backtest CRUD operations
 │   │       ├── market_data.py # OHLCV operations + gap detection
 │   │       ├── signals.py
 │   │       ├── orders.py
 │   │       ├── positions.py
 │   │       └── trades.py
 │   ├── models/                # Pydantic models
+│   │   ├── backtest.py        # Backtest, BacktestTrade, EquityCurvePoint, BacktestMetrics
 │   │   ├── market_data.py
 │   │   ├── signals.py
 │   │   ├── orders.py
 │   │   ├── positions.py
 │   │   └── strategy.py
 │   ├── services/               # Business logic layer
+│   │   ├── backtest_metrics.py   # Performance metrics calculator (25+ metrics)
+│   │   ├── backtest_position_tracker.py  # Position/cash tracking with slippage
+│   │   ├── backtest_runner.py    # Event-driven backtest orchestration
 │   │   ├── base_market_data_client.py  # Abstract base class for data providers
+│   │   ├── feature_engine.py     # Indicator caching and computation
 │   │   ├── tradier_client.py  # Tradier REST API client
 │   │   ├── alpaca_client.py   # Alpaca REST API client
 │   │   ├── market_data_client_factory.py  # Provider factory/selector
 │   │   ├── data_ingestion.py  # Data orchestration (fetching, backfill validation, stats)
 │   │   └── materialized_view_refresh.py  # View refresh + validation
+│   ├── strategies/             # Trading strategies (auto-loaded from this folder)
+│   │   ├── base.py            # Abstract Strategy base class
+│   │   └── loader.py          # Dynamic strategy loader
 │   ├── tasks/
 │   │   └── scheduler.py       # APScheduler job definitions
 │   ├── utils/
+│   │   ├── indicators.py      # pandas-ta wrapper (13+ indicators)
 │   │   ├── logger.py          # Structured logging
 │   │   └── market_hours.py    # US market hours/holidays
 │   └── config.py              # Settings from environment
-├── tests/                     # Pytest test suite (45 tests, all passing)
+├── strategies/                 # Strategy implementations (outside app/)
+│   └── opening_range_breakout.py  # Reference strategy implementation
+├── tests/                     # Pytest test suite (88 tests, all passing)
 │   ├── conftest.py            # Shared fixtures
 │   ├── test_database.py       # Database tests
 │   ├── test_tradier_client.py # Tradier API client tests
@@ -144,8 +171,15 @@ trader-bot/
 │   ├── test_data_ingestion.py # Ingestion + backfill validation + stats tests
 │   ├── test_backfill.py       # Backfill tests
 │   ├── test_gap_detection.py  # Gap detection tests
-│   └── test_materialized_view_refresh.py  # View refresh + validation tests
+│   ├── test_materialized_view_refresh.py  # View refresh + validation tests
+│   └── unit/                  # Unit tests for strategies and backtesting
+│       ├── test_backtest_position_tracker.py  # Position tracking tests
+│       ├── test_indicators.py  # Technical indicator tests
+│       └── test_strategy_base.py  # Strategy base class tests
 ├── bruno/trader-bot/          # API request collection
+│   ├── Backtest/              # Backtest API requests
+│   │   ├── Run Backtest.bru
+│   │   └── Get Detailed Results.bru
 ├── alembic/                   # Database migrations
 ├── main.py                    # FastAPI app entry point (ROOT, not app/)
 ├── pytest.ini                 # Pytest configuration
@@ -189,6 +223,194 @@ Base URL: `http://localhost:8000`
 - `POST /api/v1/tasks/partitions/create?year=YYYY&table_name=ohlcv_1min` - Create partitions for a year
 - `GET /api/v1/tasks/partitions/list?table_name=ohlcv_1min&year=YYYY` - List partitions (optional year filter)
 - `DELETE /api/v1/tasks/partitions/drop-year?year=YYYY&table_name=ohlcv_1min&confirm=true` - Drop year partitions (requires confirm=true)
+
+### Backtest
+- `POST /api/v1/backtest` - Run a backtest
+  - Request body: strategy_name, symbol, start_date, end_date, initial_capital, commission_per_share, slippage_bps, config
+  - Returns: backtest_id, status, metrics, trades, equity_curve
+- `GET /api/v1/backtest/{backtest_id}` - Get backtest status
+- `GET /api/v1/backtest/{backtest_id}/results` - Get backtest metrics only
+- `GET /api/v1/backtest/{backtest_id}/trades` - Get all trades
+- `GET /api/v1/backtest/{backtest_id}/equity` - Get equity curve
+- `GET /api/v1/backtest/{backtest_id}/detailed` - Get detailed trade analysis with entry/exit pairs
+  - Returns: Detailed trade info with holding periods, win/loss classification, timezone-aware timestamps
+- `GET /api/v1/backtest` - List all backtests (with optional filters)
+- `DELETE /api/v1/backtest/{backtest_id}` - Delete a backtest
+
+## Strategy Framework
+
+The system uses a **modular, pluggable strategy architecture** that allows multiple strategies to run simultaneously.
+
+### Strategy Base Class
+
+All strategies inherit from `app.strategies.base.Strategy`:
+
+```python
+class Strategy(ABC):
+    """Abstract base class for all trading strategies."""
+
+    @abstractmethod
+    def on_bar(self, symbol: str, timeframe: str, bar: pd.Series, bars: pd.DataFrame) -> None:
+        """Process new market data bar."""
+        pass
+
+    @abstractmethod
+    def generate_signals(self, symbol: str) -> list[SignalCreate]:
+        """Generate trading signals based on current state."""
+        pass
+
+    @abstractmethod
+    def get_metadata(self) -> StrategyMetadata:
+        """Return strategy metadata (name, description, parameters)."""
+        pass
+```
+
+### Key Concepts
+
+1. **Multi-timeframe Support**: Strategies can process multiple timeframes (e.g., 1min and 5min bars)
+2. **State Management**: Each symbol gets its own `StrategyState` for tracking positions and custom data
+3. **Indicator Caching**: The `FeatureEngine` caches computed indicators (60-second TTL) to avoid redundant calculations
+4. **Event-Driven**: Strategies react to market data bars and generate signals
+
+### Creating a New Strategy
+
+1. Create a new file in `strategies/` folder (e.g., `strategies/my_strategy.py`)
+2. Inherit from `Strategy` base class
+3. Implement required methods: `on_bar()`, `generate_signals()`, `get_metadata()`, `validate_parameters()`
+4. Strategy will be auto-loaded on startup
+
+### Reference Implementation: Opening Range Breakout
+
+Located at `strategies/opening_range_breakout.py`
+
+**Strategy Rules:**
+- Trade during regular market hours only (no earlier than 10:00 AM ET)
+- Calculate opening range: high/low from first 30 minutes (9:30-10:00 AM ET)
+- **Entry**: Buy when price breaks above opening high on 1-min bars (if not in position)
+- **Exit**: Sell when 5-min bar closes below EMA-10, then exit on next 1-min bar
+- Fixed position size: 10 shares
+- Allow multiple entries per day
+
+**Technical Details:**
+- Uses 1-min bars for entry signals
+- Uses 5-min bars for exit signals (EMA-10 calculation)
+- Tracks opening range and position state per day
+- Prevents duplicate signals for same breakout using `last_buy_signal_price` tracking
+
+## Backtesting Engine
+
+Event-driven backtesting framework with realistic execution simulation.
+
+### Architecture
+
+1. **BacktestRunner** (`app/services/backtest_runner.py`) - Orchestrates backtest execution
+   - Fetches historical data from database
+   - Replays bars chronologically through strategy
+   - Collects signals and executes trades via position tracker
+   - Calculates final metrics and stores results
+
+2. **BacktestPositionTracker** (`app/services/backtest_position_tracker.py`) - Simulates trade execution
+   - Tracks cash, positions, and equity in memory
+   - Applies realistic slippage (configurable basis points)
+   - Applies commission (per-share or percentage)
+   - Validates sufficient cash/shares before execution
+   - Records equity curve points
+
+3. **BacktestMetrics** (`app/services/backtest_metrics.py`) - Performance calculation
+   - **25+ metrics** including:
+     - Total return %, CAGR, Sharpe ratio, Sortino ratio
+     - Max drawdown, max drawdown duration
+     - Win rate, profit factor, average win/loss
+     - Total trades, winning/losing trades
+     - Average holding period, longest winning/losing streak
+
+### Slippage Simulation
+
+Realistic market impact modeling:
+
+```python
+slippage_pct = slippage_bps / 10000  # e.g., 5 bps = 0.05%
+
+# Buy orders: slippage increases execution price
+execution_price = price + (price * slippage_pct)
+
+# Sell orders: slippage decreases execution price
+execution_price = price - (price * slippage_pct)
+```
+
+### Running a Backtest
+
+**Via Bruno API:**
+```
+POST /api/v1/backtest
+{
+  "strategy_name": "opening_range_breakout",
+  "symbol": "SPY",
+  "start_date": "2025-08-09T00:00:00",
+  "end_date": "2025-11-07T23:59:59",
+  "initial_capital": "10000",
+  "commission_per_share": "0",
+  "slippage_bps": 5,
+  "config": {
+    "opening_range_minutes": 30,
+    "earliest_entry_time": "10:00",
+    "position_size": 10
+  }
+}
+```
+
+**Response includes:**
+- Backtest ID and status
+- Performance metrics (total return, Sharpe, max drawdown, etc.)
+- All executed trades
+- Equity curve points
+
+### Detailed Trade Analysis
+
+The `/api/v1/backtest/{id}/detailed` endpoint pairs buy/sell trades and provides:
+
+- Trade number (sequential)
+- Entry/exit times (timezone-aware, in ET)
+- Entry/exit prices
+- P&L per trade
+- Win/Loss classification
+- Holding period in minutes
+- Total commission and slippage per trade
+
+**Example Output:**
+```json
+{
+  "backtest_id": 15,
+  "strategy_name": "opening_range_breakout",
+  "symbol": "SPY",
+  "total_trades": 46,
+  "winning_trades": 10,
+  "losing_trades": 36,
+  "metrics": {
+    "total_return_pct": -2.10,
+    "sharpe_ratio": -0.15,
+    "max_drawdown_pct": -3.45,
+    "win_rate": 21.74
+  },
+  "trades": [
+    {
+      "trade_number": 1,
+      "date": "2025-08-09",
+      "entry_time": "2025-08-09T10:10:00-04:00",
+      "exit_time": "2025-08-09T11:25:00-04:00",
+      "side": "LONG",
+      "quantity": 10,
+      "entry_price": "532.45",
+      "exit_price": "534.20",
+      "pnl": "17.50",
+      "win_loss": "WIN",
+      "commission": "0",
+      "slippage": "0.53",
+      "holding_period_minutes": 75.0
+    }
+  ]
+}
+```
 
 ## Scheduled Jobs
 
@@ -595,18 +817,25 @@ Structured JSON logging via `app/utils/logger.py`
 - Alerting (email/Slack notifications for critical issues)
 - Monitoring dashboard
 
-### Trading Implementation:
-- Trading strategies (RSI, MACD, etc.)
-- Signal generation
+### Trading Implementation (Live Trading):
 - Order execution via broker APIs (Alpaca Trading API, Tradier, etc.)
-- Position management
-- Risk management
-- Backtesting framework
-- Performance analytics
+- Position management (real-time tracking)
+- Risk management (position sizing, stop losses, portfolio exposure limits)
+- Signal-to-order translation layer
+- Live strategy deployment
+
+### Additional Strategies:
+- RSI mean reversion
+- MACD crossover
+- Bollinger Band squeeze
+- Moving average crossovers
+- Volume-based strategies
 
 ### Infrastructure:
 - Real-time WebSocket data feed (both Alpaca and Tradier support this)
 - Additional data providers (Polygon.io, Interactive Brokers, etc.)
+- Backtest optimization (parameter grid search)
+- Walk-forward analysis
 
 ## Testing
 
@@ -625,7 +854,12 @@ tests/
 ├── test_market_data_repository.py  # Repository CRUD operations
 ├── test_data_ingestion.py          # Data ingestion service (provider-agnostic)
 ├── test_backfill.py                # Historical backfill
-└── test_gap_detection.py           # Gap detection and filling
+├── test_gap_detection.py           # Gap detection and filling
+├── test_materialized_view_refresh.py  # View refresh + validation
+└── unit/                           # Unit tests
+    ├── test_backtest_position_tracker.py  # Position tracking, slippage, commission
+    ├── test_indicators.py          # Technical indicators (20 tests)
+    └── test_strategy_base.py       # Strategy base class and state management
 ```
 
 **Run all tests:**
@@ -643,7 +877,7 @@ pytest tests/test_database.py
 pytest -v
 ```
 
-**Coverage:**
+**Coverage (88 tests total):**
 - Database connectivity and connection pooling
 - Automatic partition creation and management
 - Market data provider implementations (Tradier and Alpaca)
@@ -654,8 +888,13 @@ pytest -v
 - Gap detection and automatic filling
 - Market hours validation (open/closed, holidays, extended hours)
 - Bar parsing and normalization (OHLCV format with VWAP and trade count)
+- Materialized view refresh and validation
+- **Strategy framework** (base class, state management, multi-timeframe support)
+- **Backtest position tracker** (trade execution, slippage, commission, equity tracking)
+- **Technical indicators** (SMA, EMA, RSI, MACD, BBands, ATR, VWAP, Stochastic, ADX, etc.)
 
 **Notes:**
 - Tests use async fixtures for database connection
 - Some tests are conditional based on market hours
 - Data ingestion tests may show warnings due to delayed API data (expected behavior)
+- Indicator tests use 50 rows of synthetic data to ensure sufficient calculation periods
