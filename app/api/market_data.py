@@ -246,7 +246,7 @@ async def backfill_data(
     """
     Backfill historical data for a symbol.
 
-    This endpoint triggers a manual backfill of historical data from Polygon.io
+    This endpoint triggers a manual backfill of historical data
     and automatically detects and fills any gaps in the data.
 
     You can specify dates in two ways:

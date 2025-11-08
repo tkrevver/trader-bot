@@ -32,17 +32,6 @@ class Settings(BaseSettings):
     database_pool_size: int = Field(default=10, description="Database connection pool size")
     database_max_overflow: int = Field(default=20, description="Database max overflow connections")
 
-    # Polygon.io (Massive)
-    polygon_api_key: str = Field(default="", description="Polygon.io API key")
-    polygon_websocket_url: str = Field(
-        default="wss://socket.polygon.io/stocks",
-        description="Polygon.io WebSocket URL"
-    )
-    polygon_rest_url: str = Field(
-        default="https://api.polygon.io",
-        description="Polygon.io REST API URL"
-    )
-
     # Broker
     broker: Literal["paper", "tastytrade", "tradier"] = Field(
         default="paper",

@@ -4,33 +4,42 @@ An automated day/swing trading bot built with FastAPI, PostgreSQL, and Python. D
 
 ## Features
 
-- **Real-time Data Ingestion**: Polygon.io (Massive) integration for minute-level OHLCV data
+- **Real-time Data Ingestion**: Tradier API integration for minute-level OHLCV data
+- **Extended Hours Trading**: Support for pre-market and after-hours data (4 AM - 8 PM ET)
 - **Multi-Timeframe Analysis**: Automatic aggregations (1min, 5min, 15min, 30min, daily) via materialized views
 - **Partitioned Storage**: PostgreSQL native partitioning for efficient time-series data management
-- **Pluggable Strategies**: Drop-in strategy framework for easy strategy development
+- **Scheduled Data Collection**: APScheduler for automated data ingestion every minute during market hours
+- **Gap Detection**: Automatic detection and backfilling of missing data
+- **Timezone-Aware**: All timestamps in configured timezone (Eastern Time for US markets)
 - **Broker Agnostic**: Supports Tastytrade, Tradier, and paper trading
-- **Risk Management**: Position sizing, portfolio limits, daily loss limits
-- **Backtesting**: Event-driven backtesting engine for strategy validation
 - **REST API**: FastAPI-based API with automatic documentation
-- **WebSocket Support**: Real-time updates for prices, trades, and signals
+- **Testing**: Comprehensive pytest test suite
 
 ## Project Status
 
-**Week 1 Complete** ✓
+**Week 1-2 Complete** ✓
 - ✅ Database setup (PostgreSQL with native partitioning)
 - ✅ Project structure
 - ✅ Configuration management
 - ✅ Database migrations (Alembic)
 - ✅ FastAPI application with health endpoints
 - ✅ Structured logging
+- ✅ Tradier API integration
+- ✅ Real-time data ingestion (1-minute bars)
+- ✅ Automated scheduled ingestion
+- ✅ Gap detection and backfilling
+- ✅ Materialized views for multi-timeframe aggregation
+- ✅ Extended hours support
+- ✅ Market hours validation
 
-**Next Steps** (Week 2-8)
-- Data ingestion from Polygon.io
+**Next Steps** (Week 3-8)
 - Strategy framework
+- Technical indicators
+- Signal generation
 - Risk management & order execution
-- Broker integrations
+- Broker integrations for live trading
 - Backtesting engine
-- WebSocket implementation
+- Performance analytics
 
 ## Architecture
 
@@ -57,7 +66,7 @@ An automated day/swing trading bot built with FastAPI, PostgreSQL, and Python. D
 
 - Python 3.13+
 - PostgreSQL 18+ (via Postgres.app or Homebrew)
-- Polygon.io API key (optional for development)
+- Tradier API token (get free account at https://tradier.com)
 
 ### Installation
 
@@ -118,16 +127,37 @@ Once the server is running:
 
 - `GET /` - Root endpoint with API information
 - `GET /health` - Basic health check
-- `GET /health/detailed` - Detailed component health status
+- `GET /health/detailed` - Detailed component health status (database, scheduler, tradier)
+
+### Market Data
+
+- `GET /api/v1/market-data/{symbol}/latest` - Latest bar for a timeframe
+- `GET /api/v1/market-data/{symbol}/history` - Historical bars with time range
+- `GET /api/v1/market-data/{symbol}/gaps` - Detect missing data gaps
+- `POST /api/v1/market-data/{symbol}/ingest-latest` - Trigger manual ingestion (used by scheduler)
+- `POST /api/v1/market-data/{symbol}/backfill` - Manual backfill historical data
+- `GET /api/v1/market-data/{symbol}/health` - Data quality and coverage metrics
+- `GET /api/v1/market-data/{symbol}/stats` - Statistics about available data
+
+### Materialized Views
+
+- `POST /api/v1/market-data/views/refresh` - Refresh all aggregated views
+- `POST /api/v1/market-data/views/refresh?view_name=ohlcv_5min` - Refresh specific view
+- `GET /api/v1/market-data/views/stats` - View row counts and sizes
+
+### Scheduler
+
+- `GET /api/v1/scheduler/status` - Scheduler status and job information
+- `POST /api/v1/scheduler/jobs/{job_id}/pause` - Pause a scheduled job
+- `POST /api/v1/scheduler/jobs/{job_id}/resume` - Resume a paused job
 
 ### Coming Soon
 
 - Trading control (start/stop)
 - Position management
 - Order history
-- Signal history
+- Signal generation
 - Strategy management
-- Market data queries
 - Backtesting
 
 ## Database Schema
@@ -181,10 +211,12 @@ alembic revision -m "description_of_change"
 Configuration is managed via environment variables in the `.env` file:
 
 - **Database**: PostgreSQL connection settings
-- **Polygon.io**: API key and endpoints
+- **Tradier**: API token and account ID for market data and brokerage
 - **Broker**: Tastytrade, Tradier, or paper trading
-- **Trading**: Risk management parameters
-- **Safety**: Enable trading flags
+- **Trading**: Risk management parameters (position sizing, loss limits)
+- **Market Hours**: Extended hours support (pre-market and after-hours)
+- **Timezone**: Market timezone (America/New_York for US markets)
+- **Safety**: Enable trading flags (ENABLE_TRADING, ENABLE_LIVE_TRADING)
 
 See `.env.example` for all available options.
 
@@ -274,5 +306,5 @@ For questions or issues, please refer to the `IMPLEMENTATION_PLAN.md` or open an
 
 ---
 
-**Version**: 1.0.0 (Week 1 Complete)
-**Last Updated**: 2025-11-06
+**Version**: 2.0.0 (Week 1-2 Complete)
+**Last Updated**: 2025-11-07
