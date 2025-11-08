@@ -249,6 +249,31 @@ class MarketHours:
         return next_close
 
     @classmethod
+    def is_extended_market_open(cls, dt: Optional[datetime] = None) -> bool:
+        """
+        Check if market is open for extended hours trading (pre-market + regular + after-hours).
+
+        This checks if we're in any trading session: 4 AM - 8 PM ET.
+        Only returns True if extended hours are enabled in config.
+
+        Args:
+            dt: Optional datetime to check. If None, uses current time.
+
+        Returns:
+            bool: True if extended market is open, False otherwise.
+        """
+        # Check if extended hours are enabled in config
+        if not settings.enable_extended_hours:
+            return cls.is_market_open(dt)
+
+        # Extended hours enabled - check all sessions
+        return (
+            cls.is_market_open(dt) or
+            cls.is_pre_market(dt) or
+            cls.is_after_hours(dt)
+        )
+
+    @classmethod
     def get_market_status(cls, dt: Optional[datetime] = None) -> str:
         """
         Get a string describing the current market status.

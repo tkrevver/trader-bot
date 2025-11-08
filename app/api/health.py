@@ -73,14 +73,14 @@ async def detailed_health_check():
     except Exception as e:
         components["scheduler"] = f"unhealthy: {str(e)}"
 
-    # Check Polygon.io
+    # Check Tradier (Market Data)
     try:
-        if settings.polygon_api_key and settings.polygon_rest_url:
-            components["polygon"] = "configured"
+        if settings.tradier_api_token and settings.tradier_api_url:
+            components["tradier"] = "configured"
         else:
-            components["polygon"] = "not_configured"
+            components["tradier"] = "not_configured"
     except Exception as e:
-        components["polygon"] = f"error: {str(e)}"
+        components["tradier"] = f"error: {str(e)}"
 
     # Check Broker (placeholder - will implement later)
     components["broker"] = "not_configured"

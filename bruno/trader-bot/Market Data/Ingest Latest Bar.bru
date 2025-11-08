@@ -1,0 +1,38 @@
+meta {
+  name: Ingest Latest Bar
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/market-data/:symbol/ingest-latest
+  body: none
+  auth: none
+}
+
+params:path {
+  symbol: SPY
+}
+
+docs {
+  Manually trigger ingestion of the latest 1-minute bar from Tradier.
+  
+  This endpoint is called automatically by the scheduler every minute during
+  market hours (9:30 AM - 4:00 PM ET).
+  
+  Use this to:
+  - Manually fetch the latest bar if scheduler missed it
+  - Test the data ingestion pipeline
+  - Force an update outside of the scheduler
+  
+  The endpoint will:
+  1. Check if market is open
+  2. Fetch the latest 1-minute bar from Tradier
+  3. Check for duplicates
+  4. Insert into ohlcv_1min table
+  
+  Returns:
+  - symbol: The symbol ingested
+  - success: true if bar was ingested, false otherwise
+  - message: Status message
+}

@@ -4,40 +4,56 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime
 import asyncio
+import aiohttp
 
 from app.utils.logger import logger
 from app.utils.market_hours import MarketHours
-from app.services.data_ingestion import get_data_ingestion_service
-from app.services.materialized_view_refresh import MaterializedViewRefreshService
+from app.config import settings
 
 
 class SchedulerService:
-    """Service for managing scheduled tasks."""
+    """Service for managing scheduled tasks.
+
+    All jobs call API endpoints (not services directly) to ensure consistent flow
+    and proper database connection handling.
+    """
 
     def __init__(self):
         self.scheduler = AsyncIOScheduler(timezone='America/New_York')
-        self.data_ingestion = get_data_ingestion_service()
+        self.api_base_url = f"http://{settings.host}:{settings.port}/api/v1"
+        self.symbols = ["SPY"]  # Symbols to track
 
     async def ingest_market_data_job(self):
         """
         Scheduled job to ingest latest market data.
 
         Runs every minute at :05 seconds during market hours.
+        Calls the API endpoint instead of service directly.
+        Respects extended hours setting from config.
         """
         try:
             logger.info("Running data ingestion job")
 
-            # Check if market is open
-            if not MarketHours.is_market_open():
+            # Check if market is open (respects extended hours setting)
+            if not MarketHours.is_extended_market_open():
                 logger.debug("Market is closed, skipping data ingestion job")
                 return
 
-            # Ingest latest bars for all symbols
-            results = await self.data_ingestion.ingest_latest_bars_all_symbols()
+            # Call the ingest endpoint for each symbol
+            async with aiohttp.ClientSession() as session:
+                tasks = []
+                for symbol in self.symbols:
+                    url = f"{self.api_base_url}/market-data/{symbol}/ingest-latest"
+                    tasks.append(session.post(url))
+
+                responses = await asyncio.gather(*tasks, return_exceptions=True)
+
+                successful = sum(1 for r in responses if not isinstance(r, Exception) and r.status == 200)
+                failed = len(responses) - successful
 
             logger.info(
                 "Data ingestion job completed",
-                extra=results
+                extra={"total": len(self.symbols), "successful": successful, "failed": failed}
             )
 
         except Exception as e:
@@ -48,32 +64,42 @@ class SchedulerService:
 
     async def gap_detection_job(self):
         """
-        Scheduled job to detect and backfill gaps.
+        Scheduled job to detect gaps (logs only, does not backfill).
 
         Runs once per hour during market hours.
+        Respects extended hours setting from config.
         """
         try:
             logger.info("Running gap detection job")
 
-            # Check if market is open
-            if not MarketHours.is_market_open():
+            # Check if market is open (respects extended hours setting)
+            if not MarketHours.is_extended_market_open():
                 logger.debug("Market is closed, skipping gap detection job")
                 return
 
-            # Detect and backfill gaps for all symbols
-            symbols = self.data_ingestion.symbols
-
-            for symbol in symbols:
-                gaps = await self.data_ingestion.detect_and_backfill_gaps(
-                    symbol=symbol,
-                    days_back=5
-                )
-
-                if gaps:
-                    logger.warning(
-                        "Gaps detected and backfilled",
-                        extra={"symbol": symbol, "gap_count": len(gaps)}
-                    )
+            # Call the gaps endpoint for each symbol
+            async with aiohttp.ClientSession() as session:
+                for symbol in self.symbols:
+                    url = f"{self.api_base_url}/market-data/{symbol}/gaps?days_back=7"
+                    try:
+                        async with session.get(url) as response:
+                            if response.status == 200:
+                                gaps = await response.json()
+                                if gaps:
+                                    logger.warning(
+                                        "Gaps detected",
+                                        extra={"symbol": symbol, "gap_count": len(gaps)}
+                                    )
+                            else:
+                                logger.error(
+                                    "Gap detection failed",
+                                    extra={"symbol": symbol, "status": response.status}
+                                )
+                    except Exception as e:
+                        logger.error(
+                            "Error calling gaps endpoint",
+                            extra={"symbol": symbol, "error": str(e)}
+                        )
 
         except Exception as e:
             logger.error(
@@ -86,34 +112,44 @@ class SchedulerService:
         Scheduled job to perform data health checks.
 
         Runs every 15 minutes during market hours.
+        Respects extended hours setting from config.
         """
         try:
             logger.info("Running data health check job")
 
-            # Check if market is open
-            if not MarketHours.is_market_open():
+            # Check if market is open (respects extended hours setting)
+            if not MarketHours.is_extended_market_open():
                 logger.debug("Market is closed, skipping health check job")
                 return
 
-            # Perform health check for all symbols
-            symbols = self.data_ingestion.symbols
-
-            for symbol in symbols:
-                health = await self.data_ingestion.get_data_health_check(
-                    symbol=symbol,
-                    hours_back=24
-                )
-
-                if not health.get("healthy", False):
-                    logger.warning(
-                        "Data health check failed",
-                        extra=health
-                    )
-                else:
-                    logger.info(
-                        "Data health check passed",
-                        extra=health
-                    )
+            # Call the health endpoint for each symbol
+            async with aiohttp.ClientSession() as session:
+                for symbol in self.symbols:
+                    url = f"{self.api_base_url}/market-data/{symbol}/health?hours_back=24"
+                    try:
+                        async with session.get(url) as response:
+                            if response.status == 200:
+                                health = await response.json()
+                                if not health.get("healthy", False):
+                                    logger.warning(
+                                        "Data health check failed",
+                                        extra=health
+                                    )
+                                else:
+                                    logger.info(
+                                        "Data health check passed",
+                                        extra=health
+                                    )
+                            else:
+                                logger.error(
+                                    "Health check failed",
+                                    extra={"symbol": symbol, "status": response.status}
+                                )
+                    except Exception as e:
+                        logger.error(
+                            "Error calling health endpoint",
+                            extra={"symbol": symbol, "error": str(e)}
+                        )
 
         except Exception as e:
             logger.error(
@@ -127,24 +163,37 @@ class SchedulerService:
 
         Runs every 5 minutes during market hours to keep aggregated data fresh.
         Uses CONCURRENT refresh to avoid locking the views.
+        Respects extended hours setting from config.
         """
         try:
             logger.info("Running materialized view refresh job")
 
-            # Check if market is open (only refresh during trading hours)
-            if not MarketHours.is_market_open():
+            # Check if market is open (respects extended hours setting)
+            if not MarketHours.is_extended_market_open():
                 logger.debug("Market is closed, skipping view refresh job")
                 return
 
-            # Refresh all views concurrently (non-blocking)
-            results = await MaterializedViewRefreshService.refresh_all_views(
-                concurrently=True
-            )
-
-            logger.info(
-                "Materialized view refresh job completed",
-                extra=results
-            )
+            # Call the views/refresh endpoint
+            async with aiohttp.ClientSession() as session:
+                url = f"{self.api_base_url}/market-data/views/refresh?concurrently=true"
+                try:
+                    async with session.post(url) as response:
+                        if response.status == 200:
+                            results = await response.json()
+                            logger.info(
+                                "Materialized view refresh job completed",
+                                extra=results
+                            )
+                        else:
+                            logger.error(
+                                "View refresh failed",
+                                extra={"status": response.status}
+                            )
+                except Exception as e:
+                    logger.error(
+                        "Error calling views/refresh endpoint",
+                        extra={"error": str(e)}
+                    )
 
         except Exception as e:
             logger.error(
@@ -156,7 +205,7 @@ class SchedulerService:
         """Start the scheduler and register jobs."""
         try:
             # Data ingestion job - runs every minute at :05 seconds
-            # This gives Polygon.io time to aggregate the previous minute's bar
+            # This gives Tradier time to aggregate the previous minute's bar
             self.scheduler.add_job(
                 self.ingest_market_data_job,
                 trigger=CronTrigger(

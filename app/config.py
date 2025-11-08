@@ -54,12 +54,19 @@ class Settings(BaseSettings):
     tastytrade_password: str = Field(default="", description="Tastytrade password")
     tastytrade_account_number: str = Field(default="", description="Tastytrade account number")
 
-    # Tradier
-    tradier_access_token: str = Field(default="", description="Tradier access token")
-    tradier_account_id: str = Field(default="", description="Tradier account ID")
+    # Tradier (Market Data & Brokerage)
+    tradier_api_token: str = Field(default="", description="Tradier API token")
+    tradier_api_url: str = Field(
+        default="https://api.tradier.com",
+        description="Tradier API base URL"
+    )
+    tradier_account_id: str = Field(default="", description="Tradier account ID (for trading)")
+
+    # Legacy Tradier fields (deprecated, use tradier_api_token)
+    tradier_access_token: str = Field(default="", description="Deprecated: use tradier_api_token")
     tradier_base_url: str = Field(
         default="https://api.tradier.com/v1",
-        description="Tradier API base URL"
+        description="Deprecated: use tradier_api_url"
     )
 
     # Trading
@@ -68,6 +75,9 @@ class Settings(BaseSettings):
     max_portfolio_exposure: float = Field(default=1.0, description="Max portfolio exposure (1.0 = 100%)")
     daily_loss_limit_pct: float = Field(default=0.02, description="Daily loss limit as % (0.02 = 2%)")
     default_slippage_bps: int = Field(default=5, description="Default slippage in basis points")
+
+    # Market Hours
+    enable_extended_hours: bool = Field(default=False, description="Enable extended hours trading (4 AM - 8 PM ET)")
 
     # Risk Management
     enable_trading: bool = Field(default=False, description="Enable trading (safety flag)")
@@ -79,6 +89,16 @@ class Settings(BaseSettings):
     # Server
     host: str = Field(default="0.0.0.0", description="Server host")
     port: int = Field(default=8000, description="Server port")
+
+    @property
+    def tradier_session_filter(self) -> str:
+        """
+        Get the appropriate Tradier session filter based on extended hours setting.
+
+        Returns:
+            "all" if extended hours enabled (4 AM - 8 PM ET), "open" otherwise (9:30 AM - 4 PM ET)
+        """
+        return "all" if self.enable_extended_hours else "open"
 
 
 # Global settings instance

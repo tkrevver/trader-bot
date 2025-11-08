@@ -1,10 +1,10 @@
 """Data ingestion service with duplicate prevention and gap detection."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 import asyncio
 
-from app.services.polygon_client import PolygonClient
+from app.services.tradier_client import TradierClient
 from app.db.repositories.market_data import MarketDataRepository
 from app.models.market_data import OHLCVBar, MarketDataGap
 from app.utils.market_hours import MarketHours
@@ -14,17 +14,17 @@ from app.config import settings
 
 class DataIngestionService:
     """
-    Service for ingesting market data from Polygon.io.
+    Service for ingesting market data from Tradier.
 
     Features:
     - Duplicate prevention (ON CONFLICT DO NOTHING in database)
-    - Timestamp verification with retry logic
+    - Real-time data from Tradier (1-minute bars)
     - Gap detection and backfill
     - Market hours awareness
     """
 
     def __init__(self):
-        self.polygon_client = PolygonClient()
+        self.tradier_client = TradierClient()
         self.market_data_repo = MarketDataRepository()
         self.symbols = ["SPY"]  # Default symbol, can be expanded
 
@@ -33,6 +33,7 @@ class DataIngestionService:
         Ingest the latest minute bar for a symbol.
 
         This is called every minute by the scheduler during market hours.
+        Respects extended hours setting from config.
 
         Args:
             symbol: Trading symbol to ingest
@@ -41,8 +42,8 @@ class DataIngestionService:
             bool: True if bar was ingested successfully, False otherwise
         """
         try:
-            # Check if market is open
-            if not MarketHours.is_market_open():
+            # Check if market is open (respects extended hours setting)
+            if not MarketHours.is_extended_market_open():
                 logger.debug(
                     "Market is closed, skipping data ingestion",
                     extra={"symbol": symbol}
@@ -70,20 +71,32 @@ class DataIngestionService:
                 )
                 return True
 
-            # Fetch and verify bar from Polygon
-            async with self.polygon_client as client:
-                bar = await client.fetch_and_verify_bar(
-                    symbol=symbol,
-                    expected_time=expected_time,
-                    max_retries=3
-                )
+            # Fetch latest bar from Tradier
+            async with self.tradier_client as client:
+                bar_data = await client.fetch_latest_bar(symbol=symbol, interval="1min")
 
-            if not bar:
+            if not bar_data:
                 logger.warning(
-                    "Failed to fetch bar after retries",
+                    "Failed to fetch bar from Tradier",
                     extra={"symbol": symbol, "expected_time": expected_time.isoformat()}
                 )
                 return False
+
+            # Parse Tradier response to OHLCV format
+            parsed_bar = self.tradier_client.parse_bar_to_ohlcv(bar_data)
+
+            # Convert to OHLCVBar model
+            bar = OHLCVBar(
+                time=datetime.fromtimestamp(parsed_bar["t"] / 1000, tz=timezone.utc),
+                symbol=symbol.upper(),
+                open=parsed_bar["o"],
+                high=parsed_bar["h"],
+                low=parsed_bar["l"],
+                close=parsed_bar["c"],
+                volume=parsed_bar["v"],
+                vwap=None,  # Tradier doesn't provide VWAP
+                trades=None  # Tradier doesn't provide trade count
+            )
 
             # Insert bar into database
             success = await self.market_data_repo.insert_bar(bar)
@@ -118,6 +131,7 @@ class DataIngestionService:
         Ingest latest bars for all configured symbols.
 
         This is called by the scheduler every minute.
+        Respects extended hours setting from config.
 
         Returns:
             dict: Summary of ingestion results
@@ -130,8 +144,8 @@ class DataIngestionService:
         }
 
         try:
-            # Check if market is open
-            if not MarketHours.is_market_open():
+            # Check if market is open (respects extended hours setting)
+            if not MarketHours.is_extended_market_open():
                 logger.info("Market is closed, skipping data ingestion")
                 results["skipped"] = len(self.symbols)
                 return results
@@ -190,16 +204,32 @@ class DataIngestionService:
                 }
             )
 
-            # Fetch historical bars from Polygon
-            async with self.polygon_client as client:
-                bars = await client.fetch_historical_bars(
+            # Fetch historical bars from Tradier
+            # session_filter defaults to config setting (respects ENABLE_EXTENDED_HOURS)
+            async with self.tradier_client as client:
+                bars_data = await client.fetch_timesales(
                     symbol=symbol,
-                    from_date=start_date,
-                    to_date=end_date,
-                    timeframe="1",
-                    multiplier="minute",
-                    limit=50000
+                    interval="1min",
+                    start=start_date,
+                    end=end_date
                 )
+
+            # Convert Tradier bars to OHLCVBar models
+            bars = []
+            for bar_data in bars_data:
+                parsed_bar = self.tradier_client.parse_bar_to_ohlcv(bar_data)
+                bar = OHLCVBar(
+                    time=datetime.fromtimestamp(parsed_bar["t"] / 1000, tz=timezone.utc),
+                    symbol=symbol.upper(),
+                    open=parsed_bar["o"],
+                    high=parsed_bar["h"],
+                    low=parsed_bar["l"],
+                    close=parsed_bar["c"],
+                    volume=parsed_bar["v"],
+                    vwap=None,
+                    trades=None
+                )
+                bars.append(bar)
 
             if not bars:
                 logger.warning(

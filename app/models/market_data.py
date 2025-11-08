@@ -2,8 +2,11 @@
 
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, field_serializer
 from decimal import Decimal
+import pytz
+
+from app.config import settings
 
 
 class OHLCVBar(BaseModel):
@@ -18,6 +21,16 @@ class OHLCVBar(BaseModel):
     volume: int = Field(..., description="Trading volume", ge=0)
     vwap: Optional[Decimal] = Field(None, description="Volume-weighted average price")
     trades: Optional[int] = Field(None, description="Number of trades", ge=0)
+
+    @field_serializer("time")
+    def serialize_time(self, dt: datetime) -> str:
+        """Serialize datetime to configured timezone."""
+        tz = pytz.timezone(settings.timezone)
+        # Convert to configured timezone
+        if dt.tzinfo is None:
+            dt = pytz.utc.localize(dt)
+        dt_local = dt.astimezone(tz)
+        return dt_local.isoformat()
 
     @field_validator("high")
     @classmethod
@@ -69,6 +82,15 @@ class Tick(BaseModel):
     size: int = Field(..., description="Trade size", ge=0)
     exchange: Optional[str] = Field(None, description="Exchange code")
     conditions: Optional[list[str]] = Field(None, description="Trade conditions")
+
+    @field_serializer("timestamp")
+    def serialize_timestamp(self, dt: datetime) -> str:
+        """Serialize datetime to configured timezone."""
+        tz = pytz.timezone(settings.timezone)
+        if dt.tzinfo is None:
+            dt = pytz.utc.localize(dt)
+        dt_local = dt.astimezone(tz)
+        return dt_local.isoformat()
 
     class Config:
         """Pydantic config."""
@@ -131,6 +153,15 @@ class MarketDataGap(BaseModel):
     end_time: datetime = Field(..., description="End of gap")
     missing_bars: int = Field(..., description="Number of missing bars")
     detected_at: datetime = Field(default_factory=datetime.utcnow)
+
+    @field_serializer("start_time", "end_time", "detected_at")
+    def serialize_datetimes(self, dt: datetime) -> str:
+        """Serialize datetime to configured timezone."""
+        tz = pytz.timezone(settings.timezone)
+        if dt.tzinfo is None:
+            dt = pytz.utc.localize(dt)
+        dt_local = dt.astimezone(tz)
+        return dt_local.isoformat()
 
     class Config:
         """Pydantic config."""

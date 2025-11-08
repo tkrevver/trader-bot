@@ -9,6 +9,7 @@ from app.models.market_data import BarResponse, LatestBarResponse, MarketDataGap
 from app.services.data_ingestion import get_data_ingestion_service
 from app.services.materialized_view_refresh import MaterializedViewRefreshService
 from app.utils.logger import logger
+from app.utils.market_hours import MarketHours
 
 router = APIRouter(prefix="/api/v1/market-data", tags=["Market Data"])
 
@@ -172,6 +173,55 @@ async def check_for_gaps(
         raise HTTPException(
             status_code=500,
             detail=f"Error checking for gaps: {str(e)}"
+        )
+
+
+@router.post("/{symbol}/ingest-latest")
+async def ingest_latest_bar(symbol: str):
+    """
+    Manually trigger ingestion of the latest bar for a symbol.
+
+    This is what the scheduler calls every minute during market hours.
+    Respects extended hours setting from config.
+
+    Args:
+        symbol: Trading symbol (e.g., "SPY")
+
+    Returns:
+        dict: Ingestion result
+    """
+    try:
+        # Check market status
+        market_status = MarketHours.get_market_status()
+        market_open = MarketHours.is_extended_market_open()
+
+        data_ingestion = get_data_ingestion_service()
+        success = await data_ingestion.ingest_latest_bar(symbol.upper())
+
+        # Provide better error message based on market status
+        if not success and not market_open:
+            message = f"Market is {market_status} - ingestion skipped"
+        elif success:
+            message = "Bar ingested successfully"
+        else:
+            message = "Ingestion failed - check if data is available from Tradier"
+
+        return {
+            "symbol": symbol.upper(),
+            "success": success,
+            "market_status": market_status,
+            "market_open": market_open,
+            "message": message
+        }
+
+    except Exception as e:
+        logger.error(
+            "Error ingesting latest bar",
+            extra={"symbol": symbol, "error": str(e)}
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error ingesting latest bar: {str(e)}"
         )
 
 
