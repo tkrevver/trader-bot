@@ -4,7 +4,9 @@ An automated day/swing trading bot built with FastAPI, PostgreSQL, and Python. D
 
 ## Features
 
-- **Real-time Data Ingestion**: Tradier API integration for minute-level OHLCV data
+- **Multiple Data Providers**: Pluggable architecture supporting Tradier and Alpaca Markets
+  - **Tradier**: Real-time data, $10/month (20 days historical)
+  - **Alpaca**: FREE tier with 5+ years historical data + VWAP
 - **Extended Hours Trading**: Support for pre-market and after-hours data (4 AM - 8 PM ET)
 - **Multi-Timeframe Analysis**: Automatic aggregations (1min, 5min, 15min, 30min, daily) via materialized views
 - **Partitioned Storage**: PostgreSQL native partitioning for efficient time-series data management
@@ -13,7 +15,7 @@ An automated day/swing trading bot built with FastAPI, PostgreSQL, and Python. D
 - **Timezone-Aware**: All timestamps in configured timezone (Eastern Time for US markets)
 - **Broker Agnostic**: Supports Tastytrade, Tradier, and paper trading
 - **REST API**: FastAPI-based API with automatic documentation
-- **Testing**: Comprehensive pytest test suite
+- **Testing**: Comprehensive pytest test suite with 90%+ coverage
 
 ## Project Status
 
@@ -24,13 +26,14 @@ An automated day/swing trading bot built with FastAPI, PostgreSQL, and Python. D
 - ✅ Database migrations (Alembic)
 - ✅ FastAPI application with health endpoints
 - ✅ Structured logging
-- ✅ Tradier API integration
-- ✅ Real-time data ingestion (1-minute bars)
+- ✅ **Multi-provider data architecture** (Tradier + Alpaca)
+- ✅ Real-time/near-real-time data ingestion (1-minute bars)
 - ✅ Automated scheduled ingestion
 - ✅ Gap detection and backfilling
 - ✅ Materialized views for multi-timeframe aggregation
 - ✅ Extended hours support
 - ✅ Market hours validation
+- ✅ **5+ years historical data access** (via Alpaca FREE tier)
 
 **Next Steps** (Week 3-8)
 - Strategy framework
@@ -66,7 +69,9 @@ An automated day/swing trading bot built with FastAPI, PostgreSQL, and Python. D
 
 - Python 3.13+
 - PostgreSQL 18+ (via Postgres.app or Homebrew)
-- Tradier API token (get free account at https://tradier.com)
+- **Market Data Provider** (choose one or both):
+  - **Alpaca** (recommended for backtesting): FREE account at https://alpaca.markets
+  - **Tradier**: $10/month account at https://tradier.com
 
 ### Installation
 
@@ -98,19 +103,15 @@ An automated day/swing trading bot built with FastAPI, PostgreSQL, and Python. D
 ### Development Mode (with auto-reload)
 
 ```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+**Note:** The main FastAPI app is in `main.py` at the project root, NOT `app/main.py`.
 
 ### Production Mode
 
 ```bash
-python app/main.py
-```
-
-Or:
-
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
 ## API Documentation
@@ -211,12 +212,26 @@ alembic revision -m "description_of_change"
 Configuration is managed via environment variables in the `.env` file:
 
 - **Database**: PostgreSQL connection settings
-- **Tradier**: API token and account ID for market data and brokerage
+- **Market Data Provider**: Choose between `tradier` or `alpaca`
+  - **Tradier**: API token for real-time data and brokerage
+  - **Alpaca**: API key/secret for FREE 5+ years historical data
 - **Broker**: Tastytrade, Tradier, or paper trading
 - **Trading**: Risk management parameters (position sizing, loss limits)
 - **Market Hours**: Extended hours support (pre-market and after-hours)
 - **Timezone**: Market timezone (America/New_York for US markets)
 - **Safety**: Enable trading flags (ENABLE_TRADING, ENABLE_LIVE_TRADING)
+
+### Switching Data Providers
+
+Simply change one environment variable in `.env`:
+
+```bash
+# Use Tradier (real-time, $10/month, 20 days historical)
+MARKET_DATA_PROVIDER=tradier
+
+# OR use Alpaca (FREE, 5+ years historical + VWAP)
+MARKET_DATA_PROVIDER=alpaca
+```
 
 See `.env.example` for all available options.
 
@@ -231,19 +246,26 @@ trader-bot/
 │   ├── brokers/           # Broker integrations
 │   ├── db/                # Database layer
 │   ├── models/            # Pydantic models
-│   ├── services/          # Business logic
+│   ├── services/          # Business logic & data providers
+│   │   ├── base_market_data_client.py  # Abstract provider interface
+│   │   ├── tradier_client.py           # Tradier implementation
+│   │   ├── alpaca_client.py            # Alpaca implementation
+│   │   ├── market_data_client_factory.py  # Provider selector
+│   │   └── data_ingestion.py           # Orchestration
 │   ├── strategies/        # Strategy framework
 │   ├── tasks/             # Background tasks
 │   ├── utils/             # Utilities
 │   ├── websockets/        # WebSocket endpoints
-│   ├── config.py          # Configuration
-│   └── main.py            # FastAPI app
+│   └── config.py          # Configuration
+├── main.py                # FastAPI app (ROOT, not app/)
 ├── alembic/               # Database migrations
 ├── strategies/            # User strategies
 ├── tests/                 # Tests
 ├── scripts/               # Utility scripts
 ├── .env                   # Environment config
 ├── requirements.txt       # Dependencies
+├── ALPACA_INTEGRATION.md  # Alpaca integration docs
+├── CLAUDE.md              # AI assistant context
 ├── IMPLEMENTATION_PLAN.md # Detailed plan
 └── README.md             # This file
 ```
@@ -293,6 +315,7 @@ When strategies prove profitable, deploy to:
 ## Documentation
 
 - **Implementation Plan**: See `IMPLEMENTATION_PLAN.md` for detailed architecture and roadmap
+- **AI Context**: See `CLAUDE.md` for comprehensive system documentation
 - **API Docs**: Available at `/docs` when server is running
 - **Database Schema**: See Alembic migrations in `alembic/versions/`
 
@@ -306,5 +329,14 @@ For questions or issues, please refer to the `IMPLEMENTATION_PLAN.md` or open an
 
 ---
 
-**Version**: 2.0.0 (Week 1-2 Complete)
+**Version**: 2.1.0 (Week 1-2 Complete + Multi-Provider Architecture)
 **Last Updated**: 2025-11-07
+
+## Recent Updates
+
+### v2.1.0 - Multi-Provider Data Architecture
+- ✨ Added Alpaca Markets integration (FREE 5+ years historical data)
+- 🏗️ Implemented pluggable data provider architecture
+- 📊 VWAP and trade count support (Alpaca)
+- 🔧 Easy provider switching via environment variable
+- ✅ Comprehensive test suite for both providers

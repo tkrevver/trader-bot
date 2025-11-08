@@ -14,7 +14,9 @@ Automated trading bot for day/swing trading strategies. Currently focused on SPY
 - **Framework:** FastAPI
 - **Database:** PostgreSQL with manual weekly partitioning (NOT TimescaleDB)
 - **Scheduler:** APScheduler (AsyncIOScheduler)
-- **Data Source:** Tradier Brokerage API (api.tradier.com)
+- **Data Sources:**
+  - **Tradier Brokerage API** (api.tradier.com) - Real-time data, $10/month
+  - **Alpaca Markets API** (alpaca.markets) - 5+ years historical (FREE tier)
 - **API Testing:** Bruno
 - **Migrations:** Alembic
 
@@ -85,8 +87,11 @@ trader-bot/
 │   │   ├── positions.py
 │   │   └── strategy.py
 │   ├── services/
+│   │   ├── base_market_data_client.py  # Abstract base class for data providers
 │   │   ├── tradier_client.py  # Tradier REST API client
-│   │   ├── data_ingestion.py  # Orchestrates data fetching
+│   │   ├── alpaca_client.py   # Alpaca REST API client
+│   │   ├── market_data_client_factory.py  # Provider factory/selector
+│   │   ├── data_ingestion.py  # Orchestrates data fetching (provider-agnostic)
 │   │   └── materialized_view_refresh.py
 │   ├── tasks/
 │   │   └── scheduler.py       # APScheduler job definitions
@@ -98,6 +103,8 @@ trader-bot/
 │   ├── conftest.py            # Shared fixtures
 │   ├── test_database.py       # Database tests
 │   ├── test_tradier_client.py # Tradier API client tests
+│   ├── test_alpaca_client.py  # Alpaca API client tests
+│   ├── test_market_data_client_factory.py  # Factory pattern tests
 │   ├── test_market_hours.py   # Market hours tests
 │   ├── test_market_data_repository.py  # Repository tests
 │   ├── test_data_ingestion.py # Ingestion tests
@@ -123,7 +130,7 @@ Base URL: `http://localhost:8000`
 - `GET /api/v1/market-data/{symbol}/history` - Historical bars with time range
 - `GET /api/v1/market-data/{symbol}/gaps` - Detect missing data gaps
 - `POST /api/v1/market-data/{symbol}/ingest-latest` - Trigger ingestion of latest bar (called by scheduler)
-- `POST /api/v1/market-data/{symbol}/backfill` - Manual backfill from Tradier API
+- `POST /api/v1/market-data/{symbol}/backfill` - Manual backfill from configured data provider
 - `GET /api/v1/market-data/{symbol}/health` - Data quality metrics
 - `GET /api/v1/market-data/{symbol}/stats` - Coverage statistics
 
@@ -149,7 +156,7 @@ APScheduler runs 4 background jobs during market hours. **All jobs call API endp
 
 1. **data_ingestion** - Every minute at :05 seconds
    - Calls `POST /api/v1/market-data/{symbol}/ingest-latest`
-   - Fetches latest 1-minute bar from Tradier API
+   - Fetches latest 1-minute bar from configured data provider (Tradier or Alpaca)
    - Prevents duplicates
    - Only runs during market hours (9:30 AM - 4:00 PM ET)
 
@@ -225,6 +232,86 @@ GET /v1/markets/timesales
 - No timestamp verification needed - data is fresh
 - 1-minute bars available within seconds of completion
 
+## Alpaca API Integration
+
+**Base URL:** `https://data.alpaca.markets`
+
+**Authentication:** Headers `APCA-API-KEY-ID` and `APCA-API-SECRET-KEY`
+
+**Cost:** FREE tier available (paid tiers for enhanced features)
+
+### Stock Bars Endpoint
+```
+GET /v2/stocks/{symbol}/bars
+```
+
+**Parameters:**
+- `symbol` - Stock symbol (e.g., SPY)
+- `timeframe` - Bar interval (1Min, 5Min, 15Min, 30Min, 1Hour, 1Day)
+- `start` - Start date/time (ISO 8601/RFC 3339 format)
+- `end` - End date/time (ISO 8601/RFC 3339 format)
+- `limit` - Max bars per request (default: 1000, max: 10000)
+- `feed` - Data feed ("iex" for free tier, "sip" for paid)
+- `page_token` - For pagination
+
+**Historical Data:**
+- **5+ years** of data available (since 2016)
+- All timeframes: 1Min, 5Min, 15Min, 30Min, 1Hour, 1Day
+- FREE tier limitations: IEX exchange only, 15-min delay for "historical" data
+
+**Response Format:**
+```json
+{
+  "bars": [
+    {
+      "t": "2023-09-29T04:00:00Z",
+      "o": 172.015,
+      "h": 173.06,
+      "l": 170.36,
+      "c": 171.29,
+      "v": 923134,
+      "n": 12630,
+      "vw": 171.716432
+    }
+  ],
+  "symbol": "AAPL",
+  "next_page_token": "..."
+}
+```
+
+**Key Advantages:**
+- **5+ years** of historical data on FREE tier (vs Tradier's 20 days)
+- **VWAP included** in every bar
+- **Trade count** (number of trades) included
+- **Automatic pagination** for large date ranges
+- **No monthly cost** for free tier
+
+## Market Data Provider Architecture
+
+The system uses a **pluggable provider architecture** allowing easy switching between data sources:
+
+### Provider Selection
+
+Set via environment variable:
+```bash
+MARKET_DATA_PROVIDER=tradier  # or "alpaca"
+```
+
+### Architecture Components
+
+1. **BaseMarketDataClient** - Abstract interface all providers implement
+2. **TradierClient** - Tradier API implementation
+3. **AlpacaClient** - Alpaca API implementation
+4. **MarketDataClientFactory** - Returns configured provider instance
+
+### Adding New Providers
+
+To add a new data provider:
+1. Create class inheriting from `BaseMarketDataClient`
+2. Implement required methods: `fetch_timesales()`, `fetch_latest_bar()`, `parse_bar_to_ohlcv()`
+3. Add provider to factory in `market_data_client_factory.py`
+4. Update config with new provider option
+
 ## Data Ingestion Flow
 
 ```
@@ -250,19 +337,28 @@ GET /v1/markets/timesales
        │
        v
 ┌──────────────────────────┐
-│ TradierClient            │
-│ - Fetch latest bar       │
-│ - Real-time data (no     │
-│   timestamp verification │
-│   needed)                │
+│ MarketDataClientFactory  │
+│ - Returns configured     │
+│   provider instance      │
 └──────┬───────────────────┘
        │
-       v
-┌──────────────────────────┐
-│ MarketDataRepository     │
-│ - Insert into ohlcv_1min │
-│ - Handle duplicates      │
-└──────────────────────────┘
+       ├─────────────────┬──────────────────┐
+       v                 v                  v
+┌─────────────┐   ┌─────────────┐   ┌──────────┐
+│TradierClient│   │AlpacaClient │   │  Future  │
+│- Real-time  │   │- 5+ years   │   │ Providers│
+│- 20 days    │   │- FREE tier  │   │          │
+│  historical │   │- VWAP data  │   │          │
+└──────┬──────┘   └──────┬──────┘   └────┬─────┘
+       │                 │                │
+       └─────────────────┴────────────────┘
+                         │
+                         v
+              ┌──────────────────────────┐
+              │ MarketDataRepository     │
+              │ - Insert into ohlcv_1min │
+              │ - Handle duplicates      │
+              └──────────────────────────┘
 ```
 
 ## Environment Variables
@@ -285,6 +381,15 @@ DATABASE_MAX_OVERFLOW=20
 TRADIER_API_TOKEN=your_api_token_here
 TRADIER_API_URL=https://api.tradier.com
 TRADIER_ACCOUNT_ID=
+
+# Alpaca (Market Data & Brokerage)
+ALPACA_API_KEY=your_api_key_here
+ALPACA_API_SECRET=your_api_secret_here
+ALPACA_DATA_API_URL=https://data.alpaca.markets
+ALPACA_TRADING_API_URL=https://paper-api.alpaca.markets
+
+# Market Data Provider Selection
+MARKET_DATA_PROVIDER=tradier  # Options: "tradier" or "alpaca"
 
 # Broker
 BROKER=paper
@@ -381,8 +486,9 @@ POST /api/v1/market-data/SPY/backfill?start_date=2025-11-01T00:00:00&end_date=20
 - `end_date` - Explicit end date (alternative to days)
 
 **Constraints:**
-- Max 30 days per request (API limitation)
-- Respects Tradier API rate limits
+- Tradier: Max 20 days for 1min bars (API limitation)
+- Alpaca: 5+ years available (FREE tier)
+- Respects provider API rate limits
 - Checks for duplicates before inserting
 - Always detects and fills gaps automatically
 
@@ -422,26 +528,29 @@ Structured JSON logging via `app/utils/logger.py`
 
 1. **Main app location:** `main.py` is in project root, NOT `app/main.py`
 2. **Scheduler architecture:** All scheduled jobs call API endpoints (not services) for consistent DB connection handling
-3. **Tradier Cost:** $10/month Pro plan required for real-time data
-4. **TimescaleDB:** We're NOT using it - manual partitioning only
-5. **Historical Limits:** Tradier provides 20 days of 1-minute data (grows over time)
-6. **Market hours:** Jobs only run 9:30 AM - 4:00 PM ET on trading days
-7. **Partition auto-creation:** Happens on startup, not in migrations
-8. **Materialized views:** Already exist from previous migration - don't recreate
-9. **Concurrent refresh:** Requires unique index, which exists
-10. **Gap detection vs backfill:** `/gaps` only detects and logs, `/backfill` actually fills gaps
+3. **Data Provider Selection:** Set `MARKET_DATA_PROVIDER` env var to switch between Tradier and Alpaca
+4. **Tradier Cost:** $10/month Pro plan for real-time data, 20-day historical limit
+5. **Alpaca Cost:** FREE tier with 5+ years historical data (IEX exchange only)
+6. **TimescaleDB:** We're NOT using it - manual partitioning only
+7. **Historical Limits:** Provider-dependent (Tradier: 20 days, Alpaca: 5+ years)
+8. **Market hours:** Jobs only run 9:30 AM - 4:00 PM ET on trading days
+9. **Partition auto-creation:** Happens on startup, not in migrations
+10. **Materialized views:** Already exist from previous migration - don't recreate
+11. **Concurrent refresh:** Requires unique index, which exists
+12. **Gap detection vs backfill:** `/gaps` only detects and logs, `/backfill` actually fills gaps
+13. **VWAP & Trade Count:** Only available with Alpaca (Tradier doesn't provide these)
 
 ## Next Steps (Not Yet Implemented)
 
 - Trading strategies (RSI, MACD, etc.)
 - Signal generation
-- Order execution
+- Order execution via broker APIs (Alpaca Trading API, Tradier, etc.)
 - Position management
 - Risk management
-- Broker integration (Alpaca)
-- Real-time WebSocket data feed
+- Real-time WebSocket data feed (both Alpaca and Tradier support this)
 - Backtesting framework
 - Performance analytics
+- Additional data providers (Polygon.io, Interactive Brokers, etc.)
 
 ## Testing
 
@@ -454,9 +563,11 @@ tests/
 ├── conftest.py                     # Shared fixtures and configuration
 ├── test_database.py                # Database connection and partitions
 ├── test_tradier_client.py          # Tradier API client
+├── test_alpaca_client.py           # Alpaca API client
+├── test_market_data_client_factory.py  # Provider factory pattern
 ├── test_market_hours.py            # Market hours utilities
 ├── test_market_data_repository.py  # Repository CRUD operations
-├── test_data_ingestion.py          # Data ingestion service
+├── test_data_ingestion.py          # Data ingestion service (provider-agnostic)
 ├── test_backfill.py                # Historical backfill
 └── test_gap_detection.py           # Gap detection and filling
 ```
@@ -479,12 +590,14 @@ pytest -v
 **Coverage:**
 - Database connectivity and connection pooling
 - Automatic partition creation and management
-- Tradier API integration
+- Market data provider implementations (Tradier and Alpaca)
+- Provider factory pattern and selection
 - Market data repository CRUD operations
-- Data ingestion (market hours aware, extended hours support)
-- Historical data backfill
+- Data ingestion (market hours aware, extended hours support, provider-agnostic)
+- Historical data backfill (works with any provider)
 - Gap detection and automatic filling
 - Market hours validation (open/closed, holidays, extended hours)
+- Bar parsing and normalization (OHLCV format with VWAP and trade count)
 
 **Notes:**
 - Tests use async fixtures for database connection
