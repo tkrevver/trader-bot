@@ -5,7 +5,7 @@ meta {
 }
 
 get {
-  url: https://api.tradier.com/v1/markets/timesales?symbol=SPY&interval=1min&session_filter=open
+  url: https://api.tradier.com/v1/markets/timesales?symbol=SPY&interval=1min&session_filter=all
   body: none
   auth: inherit
 }
@@ -13,7 +13,7 @@ get {
 params:query {
   symbol: SPY
   interval: 1min
-  session_filter: open
+  session_filter: all
 }
 
 docs {
