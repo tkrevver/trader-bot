@@ -51,13 +51,6 @@ class Settings(BaseSettings):
     )
     tradier_account_id: str = Field(default="", description="Tradier account ID (for trading)")
 
-    # Legacy Tradier fields (deprecated, use tradier_api_token)
-    tradier_access_token: str = Field(default="", description="Deprecated: use tradier_api_token")
-    tradier_base_url: str = Field(
-        default="https://api.tradier.com/v1",
-        description="Deprecated: use tradier_api_url"
-    )
-
     # Trading
     initial_capital: float = Field(default=100000.0, description="Initial capital for paper trading")
     max_position_size_pct: float = Field(default=0.10, description="Max position size as % of portfolio")
