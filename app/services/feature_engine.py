@@ -16,9 +16,8 @@ from asyncpg.pool import Pool
 
 from app.db.repositories.market_data import MarketDataRepository
 from app.utils import indicators
-from app.utils.logger import get_logger
+from app.utils.logger import logger
 
-logger = get_logger(__name__)
 
 
 class FeatureEngine:
@@ -31,7 +30,7 @@ class FeatureEngine:
             db_pool: Database connection pool
         """
         self.db_pool = db_pool
-        self.market_data_repo = MarketDataRepository(db_pool)
+        self.market_data_repo = MarketDataRepository()
         self._cache: dict[str, tuple[datetime, pd.DataFrame]] = {}
         self._cache_ttl_seconds = 60  # Cache for 60 seconds
 
@@ -75,15 +74,13 @@ class FeatureEngine:
         start_time = end_time - timedelta(minutes=lookback_minutes * 2)
 
         # Fetch from appropriate table
-        async with self.db_pool.acquire() as conn:
-            bars = await self.market_data_repo.get_bars(
-                conn=conn,
-                symbol=symbol,
-                timeframe=timeframe,
-                start_time=start_time,
-                end_time=end_time,
-                limit=lookback_bars,
-            )
+        bars = await self.market_data_repo.get_bars(
+            symbol=symbol,
+            start_time=start_time,
+            end_time=end_time,
+            timeframe=timeframe,
+            limit=lookback_bars,
+        )
 
         if not bars:
             logger.warning(

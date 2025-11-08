@@ -9,37 +9,27 @@ from app.utils import indicators
 
 @pytest.fixture
 def sample_ohlcv_data():
-    """Generate sample OHLCV data for testing."""
+    """Generate sample OHLCV data for testing (50 rows for indicators needing more data)."""
+    import numpy as np
+
+    # Generate 50 rows of realistic price data
+    np.random.seed(42)  # For reproducibility
+    n = 50
+
+    # Start at 100 and create a trending price series
+    close_prices = 100 + np.cumsum(np.random.randn(n) * 0.5)
+
+    # Create DatetimeIndex for VWAP
+    index = pd.date_range("2025-01-01 09:30", periods=n, freq="1min")
+
     data = {
-        "open": [100.0, 101.0, 102.0, 101.5, 103.0, 102.5, 104.0, 103.5, 105.0, 104.5],
-        "high": [101.0, 102.0, 103.0, 102.5, 104.0, 103.5, 105.0, 104.5, 106.0, 105.5],
-        "low": [99.5, 100.5, 101.5, 101.0, 102.5, 102.0, 103.5, 103.0, 104.5, 104.0],
-        "close": [
-            100.5,
-            101.5,
-            102.5,
-            101.0,
-            103.5,
-            102.0,
-            104.5,
-            103.0,
-            105.5,
-            104.0,
-        ],
-        "volume": [
-            1000000,
-            1100000,
-            1200000,
-            1050000,
-            1300000,
-            1150000,
-            1400000,
-            1250000,
-            1500000,
-            1350000,
-        ],
+        "open": close_prices - np.random.rand(n) * 0.5,
+        "high": close_prices + np.random.rand(n) * 1.5,
+        "low": close_prices - np.random.rand(n) * 1.5,
+        "close": close_prices,
+        "volume": np.random.randint(1000000, 2000000, n),
     }
-    return pd.DataFrame(data)
+    return pd.DataFrame(data, index=index)
 
 
 def test_validate_ohlcv_success(sample_ohlcv_data):
@@ -108,9 +98,10 @@ def test_bbands_calculation(sample_ohlcv_data):
 
     assert isinstance(result, pd.DataFrame)
     # Should have lower, middle, upper bands
-    assert "BBL_20_2.0" in result.columns  # Lower band
-    assert "BBM_20_2.0" in result.columns  # Middle band (SMA)
-    assert "BBU_20_2.0" in result.columns  # Upper band
+    # pandas-ta uses format: BBL_length_std_stddev (e.g., BBL_20_2.0_2.0)
+    assert any("BBL_20" in col for col in result.columns)  # Lower band
+    assert any("BBM_20" in col for col in result.columns)  # Middle band (SMA)
+    assert any("BBU_20" in col for col in result.columns)  # Upper band
 
 
 def test_atr_calculation(sample_ohlcv_data):

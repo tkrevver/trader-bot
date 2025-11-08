@@ -8,7 +8,7 @@ from app.config import settings
 from app.db.connection import db_pool
 from app.db.partition_manager import ensure_partitions_exist
 from app.utils.logger import logger
-from app.api import health, market_data, scheduler, tasks
+from app.api import health, market_data, scheduler, tasks, backtest
 from app.tasks.scheduler import get_scheduler_service
 
 
@@ -103,6 +103,7 @@ app.include_router(health.router)
 app.include_router(market_data.router)
 app.include_router(scheduler.router)
 app.include_router(tasks.router)
+app.include_router(backtest.router)
 
 
 @app.get("/")

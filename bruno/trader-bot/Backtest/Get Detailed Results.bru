@@ -1,0 +1,36 @@
+meta {
+  name: Get Detailed Results
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/backtest/:test_id/detailed
+  body: none
+  auth: none
+}
+
+params:path {
+  test_id: 15
+}
+
+docs {
+  Get detailed backtest results with all trade information
+  
+  Returns:
+  - Backtest metadata (strategy, symbol, dates, capital)
+  - Performance metrics
+  - Detailed trade list with:
+    - Trade number
+    - Date (YYYY-MM-DD)
+    - Entry time
+    - Exit time
+    - Entry price
+    - Exit price
+    - P&L
+    - Win/Loss indicator
+    - Commission and slippage
+    - Holding period in minutes
+  
+  Replace {backtest_id} in the URL with the actual backtest ID from the Run Backtest response
+}

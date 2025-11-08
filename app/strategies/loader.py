@@ -13,9 +13,8 @@ from pathlib import Path
 from typing import Optional, Type
 
 from app.strategies.base import Strategy
-from app.utils.logger import get_logger
+from app.utils.logger import logger
 
-logger = get_logger(__name__)
 
 
 class StrategyLoader:

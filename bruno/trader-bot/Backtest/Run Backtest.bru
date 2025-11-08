@@ -1,0 +1,42 @@
+meta {
+  name: Run Backtest
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/backtest
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "strategy_name": "opening_range_breakout",
+    "symbol": "SPY",
+    "start_date": "2025-08-09T00:00:00",
+    "end_date": "2025-11-07T23:59:59",
+    "initial_capital": "10000",
+    "commission_per_share": "0",
+    "slippage_bps": 5,
+    "config": {
+      "opening_range_minutes": 30,
+      "earliest_entry_time": "10:00",
+      "position_size": 10
+    }
+  }
+}
+
+docs {
+  Run a backtest for the Opening Range Breakout strategy
+
+  Returns:
+  - Backtest ID and status
+  - Performance metrics (total return, Sharpe ratio, max drawdown, etc.)
+  - All trades executed
+  - Equity curve points
+
+  Date range: Last 90 days by default
+  Initial capital: $10,000
+  No commission, 5 bps slippage
+}

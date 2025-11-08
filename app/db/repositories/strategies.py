@@ -6,9 +6,8 @@ from asyncpg import Connection
 from asyncpg.pool import Pool
 
 from app.models.strategy import Strategy, StrategyCreate, StrategyUpdate
-from app.utils.logger import get_logger
+from app.utils.logger import logger
 
-logger = get_logger(__name__)
 
 
 class StrategyRepository:

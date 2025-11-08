@@ -20,10 +20,9 @@ from app.db.repositories.strategies import StrategyRepository
 from app.models.signals import SignalCreate
 from app.services.feature_engine import FeatureEngine
 from app.strategies.loader import StrategyLoader
-from app.utils.logger import get_logger
+from app.utils.logger import logger
 from app.utils.market_hours import MarketHours
 
-logger = get_logger(__name__)
 
 
 class SignalGenerationService:

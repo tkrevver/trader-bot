@@ -109,7 +109,10 @@ class OpeningRangeBreakoutStrategy(Strategy):
         state.custom_state["opening_high"] = None
         state.custom_state["opening_low"] = None
         state.custom_state["opening_range_set"] = False
-        state.custom_state["last_5min_close"] = None
+        state.custom_state["last_buy_signal_price"] = None
+        state.custom_state["exit_signal_triggered"] = False
+        state.custom_state["exit_trigger_price"] = None
+        state.custom_state["exit_trigger_ema"] = None
 
     def _update_opening_range(self, symbol: str, bar: pd.Series) -> None:
         """Update opening range with current bar.
@@ -144,9 +147,12 @@ class OpeningRangeBreakoutStrategy(Strategy):
 
         # Opening range: 9:30-10:00 AM ET (default 30 minutes)
         market_open = time(9, 30)
-        opening_range_end = time(
-            9, 30 + opening_range_minutes
-        )  # Simple, assumes < 60 minutes
+
+        # Calculate opening range end time properly
+        total_minutes = 9 * 60 + 30 + opening_range_minutes
+        end_hour = total_minutes // 60
+        end_minute = total_minutes % 60
+        opening_range_end = time(end_hour, end_minute)
 
         return market_open <= market_time.time() < opening_range_end
 
@@ -203,13 +209,32 @@ class OpeningRangeBreakoutStrategy(Strategy):
                 # Mark opening range as complete
                 state.custom_state["opening_range_set"] = True
 
-        # Process 5-minute bars for exit signal (track previous close)
+            # Store current price for signal generation
+            current_price = float(bar["close"])
+            state.custom_state["current_price"] = current_price
+            state.custom_state["current_time"] = bar_time
+
+        # Process 5-minute bars for exit signal
         elif timeframe == "5min":
-            # Store this 5-min bar close for exit checking
-            if len(bars) >= 2:
-                # Get previous 5-min close (second to last)
-                prev_close = float(bars.iloc[-2]["close"])
-                state.custom_state["last_5min_close"] = prev_close
+            # Calculate EMA-10 on 5-min bars
+            if len(bars) >= 10:
+                # Get EMA-10
+                from app.utils.indicators import ema
+                ema_series = ema(bars, length=10)
+
+                if not ema_series.empty:
+                    current_ema10 = float(ema_series.iloc[-1])
+                    current_5min_close = float(bar["close"])
+
+                    # Check if 5-min bar closed below EMA-10
+                    if current_5min_close < current_ema10:
+                        # Set flag to exit on next 1-min bar
+                        state.custom_state["exit_signal_triggered"] = True
+                        state.custom_state["exit_trigger_price"] = current_5min_close
+                        state.custom_state["exit_trigger_ema"] = current_ema10
+                    else:
+                        # Clear exit signal if price back above EMA
+                        state.custom_state["exit_signal_triggered"] = False
 
     def generate_signals(self, symbol: str) -> list[SignalCreate]:
         """Generate trading signals.
@@ -233,49 +258,55 @@ class OpeningRangeBreakoutStrategy(Strategy):
         if opening_high is None or opening_low is None:
             return signals
 
-        # We need current price to check for signals
-        # This would typically come from latest 1-min bar
-        # For now, we'll check in on_bar when appropriate
+        # Get current price from latest bar
+        current_price = state.custom_state.get("current_price")
+        current_time = state.custom_state.get("current_time")
+
+        if current_price is None or current_time is None:
+            return signals
 
         # ENTRY SIGNAL: Break above opening high (only if not in position)
         if not state.in_position:
-            # Check if we have latest bar data with breakout
-            # Note: In practice, this check happens after on_bar processes latest data
-            # For signal generation, we assume on_bar has been called with latest data
-            # and we check state for entry conditions
+            # Check if price breaks above opening high
+            if current_price > opening_high:
+                # Check if we haven't already signaled entry for this breakout
+                # Track the last price where we generated a signal
+                last_signal_price = state.custom_state.get("last_buy_signal_price")
 
-            # Entry condition is checked when current price > opening_high
-            # This is set during on_bar processing
-            # For signal generation after on_bar, we'll generate entry if conditions met
+                # Only generate signal if this is a NEW breakout (haven't signaled yet, or re-entry after exit)
+                if last_signal_price is None or last_signal_price < opening_high:
+                    # Check if we can enter (not too early)
+                    if self._can_enter_trade(current_time):
+                        position_size = self._get_config_value("position_size", 10)
 
-            position_size = self._get_config_value("position_size", 10)
+                        # Mark the price at which we generated this signal
+                        state.custom_state["last_buy_signal_price"] = current_price
 
-            # Generate BUY signal
-            # Note: In real usage, on_bar would set a flag when price breaks above opening_high
-            # For simplicity, we'll generate signal based on opening range being set
-            # The actual entry logic should be refined based on real-time price checks
+                        signals.append(
+                            SignalCreate(
+                                symbol=symbol,
+                                signal_type="BUY",
+                                strategy_name=self.get_metadata().name,
+                                timeframe="1min",
+                                metadata={
+                                    "opening_high": opening_high,
+                                    "opening_low": opening_low,
+                                    "position_size": position_size,
+                                    "current_price": current_price,
+                                    "reason": f"Price {current_price:.2f} broke above opening high {opening_high:.2f}",
+                                },
+                            )
+                        )
 
-            signals.append(
-                SignalCreate(
-                    symbol=symbol,
-                    signal_type="BUY",
-                    strategy_name=self.get_metadata().name,
-                    timeframe="1min",
-                    metadata={
-                        "opening_high": opening_high,
-                        "opening_low": opening_low,
-                        "position_size": position_size,
-                        "reason": f"Price break above opening range high {opening_high:.2f}",
-                    },
-                )
-            )
-
-        # EXIT SIGNAL: Price breaks below previous 5-min bar close
+        # EXIT SIGNAL: 5-min bar closed below EMA-10
         elif state.in_position:
-            last_5min_close = state.custom_state.get("last_5min_close")
+            exit_triggered = state.custom_state.get("exit_signal_triggered", False)
 
-            if last_5min_close is not None:
-                # Generate SELL signal
+            if exit_triggered:
+                # Generate SELL signal on next 1-min bar
+                exit_trigger_price = state.custom_state.get("exit_trigger_price")
+                exit_trigger_ema = state.custom_state.get("exit_trigger_ema")
+
                 signals.append(
                     SignalCreate(
                         symbol=symbol,
@@ -283,11 +314,16 @@ class OpeningRangeBreakoutStrategy(Strategy):
                         strategy_name=self.get_metadata().name,
                         timeframe="1min",
                         metadata={
-                            "exit_trigger": "price_below_5min_close",
-                            "last_5min_close": last_5min_close,
-                            "reason": f"Price broke below previous 5-min close {last_5min_close:.2f}",
+                            "exit_trigger": "5min_close_below_ema10",
+                            "current_price": current_price,
+                            "trigger_5min_close": exit_trigger_price,
+                            "trigger_ema10": exit_trigger_ema,
+                            "reason": f"5-min bar closed at {exit_trigger_price:.2f} below EMA-10 {exit_trigger_ema:.2f}",
                         },
                     )
                 )
+
+                # Clear the exit signal flag after generating signal
+                state.custom_state["exit_signal_triggered"] = False
 
         return signals
