@@ -84,9 +84,10 @@ async def test_fetch_latest_bar():
         await client.disconnect()
 
 
-@pytest.mark.asyncio
-async def test_parse_bar_to_ohlcv():
-    """Test parsing Tradier bar format to our OHLCV format."""
+def test_parse_bar_to_ohlcv():
+    """Test parsing Tradier bar format to standardized OHLCV format."""
+    from decimal import Decimal
+
     client = TradierClient()
 
     tradier_bar = {
@@ -103,8 +104,10 @@ async def test_parse_bar_to_ohlcv():
     parsed = client.parse_bar_to_ohlcv(tradier_bar)
 
     assert parsed["t"] == 1730984400000  # Timestamp in milliseconds
-    assert parsed["o"] == pytest.approx(667.91)
-    assert parsed["h"] == pytest.approx(667.98)
-    assert parsed["l"] == pytest.approx(666.57)
-    assert parsed["c"] == pytest.approx(666.58)
+    assert parsed["o"] == Decimal("667.91")
+    assert parsed["h"] == Decimal("667.98")
+    assert parsed["l"] == Decimal("666.57")
+    assert parsed["c"] == Decimal("666.58")
     assert parsed["v"] == 1103355
+    assert parsed["vw"] is None  # Tradier doesn't provide VWAP in standardized format
+    assert parsed["n"] is None  # Tradier doesn't provide trade count

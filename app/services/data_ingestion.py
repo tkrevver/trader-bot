@@ -4,7 +4,8 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 import asyncio
 
-from app.services.tradier_client import TradierClient
+from app.services.market_data_client_factory import get_market_data_client
+from app.services.base_market_data_client import BaseMarketDataClient
 from app.db.repositories.market_data import MarketDataRepository
 from app.models.market_data import OHLCVBar, MarketDataGap
 from app.utils.market_hours import MarketHours
@@ -14,17 +15,21 @@ from app.config import settings
 
 class DataIngestionService:
     """
-    Service for ingesting market data from Tradier.
+    Service for ingesting market data from configured provider.
+
+    Supports multiple data providers:
+    - Tradier: Real-time data, 20 days historical (1min bars)
+    - Alpaca: Free tier with 5+ years historical data
 
     Features:
     - Duplicate prevention (ON CONFLICT DO NOTHING in database)
-    - Real-time data from Tradier (1-minute bars)
+    - Real-time or near-real-time data (1-minute bars)
     - Gap detection and backfill
     - Market hours awareness
     """
 
     def __init__(self):
-        self.tradier_client = TradierClient()
+        self.market_data_client: BaseMarketDataClient = get_market_data_client()
         self.market_data_repo = MarketDataRepository()
         self.symbols = ["SPY"]  # Default symbol, can be expanded
 
@@ -71,19 +76,23 @@ class DataIngestionService:
                 )
                 return True
 
-            # Fetch latest bar from Tradier
-            async with self.tradier_client as client:
+            # Fetch latest bar from market data provider
+            async with self.market_data_client as client:
                 bar_data = await client.fetch_latest_bar(symbol=symbol, interval="1min")
 
             if not bar_data:
                 logger.warning(
-                    "Failed to fetch bar from Tradier",
-                    extra={"symbol": symbol, "expected_time": expected_time.isoformat()}
+                    f"Failed to fetch bar from {self.market_data_client.provider_name}",
+                    extra={
+                        "symbol": symbol,
+                        "expected_time": expected_time.isoformat(),
+                        "provider": self.market_data_client.provider_name
+                    }
                 )
                 return False
 
-            # Parse Tradier response to OHLCV format
-            parsed_bar = self.tradier_client.parse_bar_to_ohlcv(bar_data)
+            # Parse provider response to OHLCV format
+            parsed_bar = self.market_data_client.parse_bar_to_ohlcv(bar_data)
 
             # Convert to OHLCVBar model
             bar = OHLCVBar(
@@ -94,8 +103,8 @@ class DataIngestionService:
                 low=parsed_bar["l"],
                 close=parsed_bar["c"],
                 volume=parsed_bar["v"],
-                vwap=None,  # Tradier doesn't provide VWAP
-                trades=None  # Tradier doesn't provide trade count
+                vwap=parsed_bar.get("vw"),  # VWAP if provided by data source
+                trades=parsed_bar.get("n")  # Trade count if provided by data source
             )
 
             # Insert bar into database
@@ -204,9 +213,9 @@ class DataIngestionService:
                 }
             )
 
-            # Fetch historical bars from Tradier
+            # Fetch historical bars from market data provider
             # session_filter defaults to config setting (respects ENABLE_EXTENDED_HOURS)
-            async with self.tradier_client as client:
+            async with self.market_data_client as client:
                 bars_data = await client.fetch_timesales(
                     symbol=symbol,
                     interval="1min",
@@ -214,10 +223,10 @@ class DataIngestionService:
                     end=end_date
                 )
 
-            # Convert Tradier bars to OHLCVBar models
+            # Convert provider bars to OHLCVBar models
             bars = []
             for bar_data in bars_data:
-                parsed_bar = self.tradier_client.parse_bar_to_ohlcv(bar_data)
+                parsed_bar = self.market_data_client.parse_bar_to_ohlcv(bar_data)
                 bar = OHLCVBar(
                     time=datetime.fromtimestamp(parsed_bar["t"] / 1000, tz=timezone.utc),
                     symbol=symbol.upper(),
@@ -226,8 +235,8 @@ class DataIngestionService:
                     low=parsed_bar["l"],
                     close=parsed_bar["c"],
                     volume=parsed_bar["v"],
-                    vwap=None,
-                    trades=None
+                    vwap=parsed_bar.get("vw"),  # VWAP if provided by data source
+                    trades=parsed_bar.get("n")  # Trade count if provided by data source
                 )
                 bars.append(bar)
 

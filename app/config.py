@@ -51,6 +51,24 @@ class Settings(BaseSettings):
     )
     tradier_account_id: str = Field(default="", description="Tradier account ID (for trading)")
 
+    # Alpaca (Market Data & Brokerage)
+    alpaca_api_key: str = Field(default="", description="Alpaca API key ID")
+    alpaca_api_secret: str = Field(default="", description="Alpaca API secret key")
+    alpaca_data_api_url: str = Field(
+        default="https://data.alpaca.markets",
+        description="Alpaca Data API base URL"
+    )
+    alpaca_trading_api_url: str = Field(
+        default="https://paper-api.alpaca.markets",
+        description="Alpaca Trading API base URL (paper or live)"
+    )
+
+    # Market Data Provider Selection
+    market_data_provider: Literal["tradier", "alpaca"] = Field(
+        default="tradier",
+        description="Market data provider to use (tradier or alpaca)"
+    )
+
     # Trading
     initial_capital: float = Field(default=100000.0, description="Initial capital for paper trading")
     max_position_size_pct: float = Field(default=0.10, description="Max position size as % of portfolio")

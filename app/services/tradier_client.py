@@ -6,11 +6,12 @@ from typing import Optional, Dict, Any, List
 from decimal import Decimal
 import pytz
 
+from app.services.base_market_data_client import BaseMarketDataClient
 from app.config import settings
 from app.utils.logger import logger
 
 
-class TradierClient:
+class TradierClient(BaseMarketDataClient):
     """
     Client for Tradier Brokerage API.
 
@@ -234,5 +235,12 @@ class TradierClient:
             "h": Decimal(str(bar.get("high", 0))),
             "l": Decimal(str(bar.get("low", 0))),
             "c": Decimal(str(bar.get("close", 0))),
-            "v": int(bar.get("volume", 0))
+            "v": int(bar.get("volume", 0)),
+            "vw": None,  # Tradier doesn't provide VWAP
+            "n": None  # Tradier doesn't provide trade count
         }
+
+    @property
+    def provider_name(self) -> str:
+        """Get the name of the data provider."""
+        return "tradier"
