@@ -1,7 +1,7 @@
 meta {
-  name: Run Backtest
+  name: Strategy: Opening Range Breakout
   type: http
-  seq: 1
+  seq: 2
 }
 
 post {
@@ -29,13 +29,13 @@ body:json {
 
 docs {
   Run a backtest for the Opening Range Breakout strategy
-
+  
   Returns:
   - Backtest ID and status
   - Performance metrics (total return, Sharpe ratio, max drawdown, etc.)
   - All trades executed
   - Equity curve points
-
+  
   Date range: Last 90 days by default
   Initial capital: $10,000
   No commission, 5 bps slippage

@@ -63,3 +63,9 @@ dmypy.json
 # AI
 .claude/*
 !.claude/config.json
+
+# ML Data & Models
+data/
+models/*.pkl
+models/*_metadata.json
+notebooks/*.ipynb
