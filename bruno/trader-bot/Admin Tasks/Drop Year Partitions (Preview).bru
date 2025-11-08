@@ -1,0 +1,42 @@
+meta {
+  name: Drop Year Partitions (Preview)
+  type: http
+  seq: 3
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/tasks/partitions/drop-year?year=2026&table_name=ohlcv_1min&confirm=false
+  body: none
+  auth: none
+}
+
+params:query {
+  year: 2026
+  table_name: ohlcv_1min
+  confirm: false
+}
+
+docs {
+  Drop all partitions for a specific year (with safety checks).
+  
+  ⚠️ WARNING: This PERMANENTLY DELETES DATA!
+  
+  Use this when you need to recreate partitions with correct bounds.
+  
+  Query Parameters (REQUIRED):
+  - year: Year to drop partitions for (2020-2030)
+  - table_name: Name of the partitioned table
+  
+  Query Parameters (SAFETY):
+  - confirm: Must be TRUE to actually drop (default: false)
+  
+  Two-step process:
+  1. Preview with confirm=false (shows what will be dropped)
+  2. Execute with confirm=true (actually drops)
+  
+  Use Case - Fix 2025 Partitions:
+  1. Preview: ?year=2025&table_name=ohlcv_1min&confirm=false
+  2. Confirm: ?year=2025&table_name=ohlcv_1min&confirm=true
+  3. Recreate: POST /partitions/create?year=2025&table_name=ohlcv_1min
+  4. Backfill: POST /market-data/SPY/backfill?days=30
+}

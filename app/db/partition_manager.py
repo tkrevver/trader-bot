@@ -67,6 +67,8 @@ class PartitionManager:
                 iso_year, iso_week, _ = start.isocalendar()
                 partition_name = f"{table_name}_{iso_year}_w{iso_week:02d}"
 
+                # Always create partitions - this runs for current + N weeks ahead
+                # so we don't need to filter by year like in the API endpoint
                 if partition_name not in existing_partitions:
                     try:
                         # Create partition
@@ -175,31 +177,153 @@ class PartitionManager:
             raise
 
     @staticmethod
-    async def drop_old_partitions(
-        table_name: str = "ohlcv_1min",
-        older_than_weeks: int = 52
-    ) -> list[str]:
+    async def create_partitions_for_year(
+        year: int,
+        table_name: str = "ohlcv_1min"
+    ) -> dict:
         """
-        Drop partitions older than the specified number of weeks.
+        Create partitions for all weeks in a specific year.
 
-        Use with caution - this permanently deletes data!
+        This is safe to re-run - existing partitions will be skipped.
 
         Args:
+            year: Year to create partitions for (e.g., 2024)
             table_name: Name of the partitioned table
-            older_than_weeks: Drop partitions older than this many weeks
 
         Returns:
-            list[str]: List of dropped partition names
+            dict: Summary with created, skipped, and total counts
         """
         try:
-            cutoff_date = datetime.utcnow() - timedelta(weeks=older_than_weeks)
-
-            logger.warning(
-                "Dropping old partitions",
+            logger.info(
+                "Creating partitions for year",
                 extra={
                     "table": table_name,
-                    "cutoff_date": cutoff_date.isoformat(),
-                    "older_than_weeks": older_than_weeks
+                    "year": year
+                }
+            )
+
+            # Start from the first day of the year
+            start_date = datetime(year, 1, 1)
+            # End at the last day of the year
+            end_date = datetime(year, 12, 31, 23, 59, 59)
+
+            # Calculate the first Monday of the year (or Jan 1 if it's Monday)
+            start = start_date - timedelta(days=start_date.weekday())
+
+            # Get list of existing partitions
+            existing = await db_pool.fetch("""
+                SELECT tablename
+                FROM pg_tables
+                WHERE schemaname = 'public'
+                AND tablename LIKE $1
+                ORDER BY tablename
+            """, f"{table_name}_%")
+
+            existing_partitions = {row['tablename'] for row in existing}
+
+            created = []
+            skipped = []
+
+            # Create partitions for each week
+            current = start
+            while current <= end_date:
+                week_end = current + timedelta(weeks=1)
+
+                # Use ISO calendar week number for partition name
+                iso_year, iso_week, _ = current.isocalendar()
+
+                # Create partition if it starts within the target calendar year
+                # OR if it overlaps with the target year (handles edge cases like Dec 30-31)
+                if current.year == year or (current.year < year and week_end.year == year):
+                    partition_name = f"{table_name}_{iso_year}_w{iso_week:02d}"
+
+                    if partition_name not in existing_partitions:
+                        try:
+                            # Create partition
+                            await db_pool.execute(f"""
+                                CREATE TABLE {partition_name} PARTITION OF {table_name}
+                                FOR VALUES FROM ('{current.isoformat()}') TO ('{week_end.isoformat()}')
+                            """)
+                            created.append({
+                                "name": partition_name,
+                                "start": current.date().isoformat(),
+                                "end": week_end.date().isoformat()
+                            })
+                            logger.info(
+                                "Created partition",
+                                extra={
+                                    "partition": partition_name,
+                                    "start": current.isoformat(),
+                                    "end": week_end.isoformat()
+                                }
+                            )
+                        except Exception as e:
+                            logger.error(
+                                "Failed to create partition",
+                                extra={
+                                    "partition": partition_name,
+                                    "error": str(e)
+                                }
+                            )
+                            raise
+                    else:
+                        skipped.append(partition_name)
+
+                current = week_end
+
+            result = {
+                "year": year,
+                "table": table_name,
+                "created": created,
+                "skipped": skipped,
+                "summary": {
+                    "total_created": len(created),
+                    "total_skipped": len(skipped),
+                    "total_existing": len(existing_partitions)
+                }
+            }
+
+            logger.info(
+                f"Partition creation for {year} completed",
+                extra={
+                    "year": year,
+                    "created_count": len(created),
+                    "skipped_count": len(skipped)
+                }
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(
+                f"Error creating partitions for {year}",
+                extra={"error": str(e), "year": year, "table": table_name}
+            )
+            raise
+
+    @staticmethod
+    async def drop_partitions_for_year(
+        year: int,
+        table_name: str = "ohlcv_1min"
+    ) -> list[dict]:
+        """
+        Drop all partitions for a specific year.
+
+        WARNING: This permanently deletes data! Use with caution.
+
+        Args:
+            year: Year to drop partitions for
+            table_name: Name of the partitioned table
+
+        Returns:
+            list[dict]: List of dropped partition names
+        """
+        try:
+            logger.warning(
+                "Dropping partitions for year",
+                extra={
+                    "table": table_name,
+                    "year": year
                 }
             )
 
@@ -212,47 +336,33 @@ class PartitionManager:
                 ORDER BY tablename
             """, f"{table_name}_%")
 
+            # Filter to only partitions for the specified year
+            year_pattern = f"_{year}_w"
             dropped = []
 
             for row in existing:
                 partition_name = row['tablename']
 
-                # Extract year and week from partition name
-                # Format: ohlcv_1min_2025_w01
-                try:
-                    parts = partition_name.split('_')
-                    year = int(parts[-2])
-                    week = int(parts[-1].replace('w', ''))
-
-                    # Calculate partition date
-                    partition_date = datetime.strptime(f"{year}-W{week:02d}-1", "%Y-W%W-%w")
-
-                    if partition_date < cutoff_date:
-                        # Drop partition
-                        await db_pool.execute(f"DROP TABLE IF EXISTS {partition_name}")
-                        dropped.append(partition_name)
-                        logger.warning(
-                            "Dropped old partition",
-                            extra={"partition": partition_name, "date": partition_date.isoformat()}
-                        )
-                except (ValueError, IndexError) as e:
+                if year_pattern in partition_name:
+                    # Drop the partition
+                    await db_pool.execute(f"DROP TABLE IF EXISTS {partition_name}")
+                    dropped.append({"name": partition_name})
                     logger.warning(
-                        "Could not parse partition name",
-                        extra={"partition": partition_name, "error": str(e)}
+                        "Dropped partition",
+                        extra={"partition": partition_name}
                     )
-                    continue
 
             logger.warning(
-                "Old partition cleanup completed",
-                extra={"dropped_count": len(dropped), "dropped_partitions": dropped}
+                "Year partition cleanup completed",
+                extra={"year": year, "dropped_count": len(dropped)}
             )
 
             return dropped
 
         except Exception as e:
             logger.error(
-                "Error dropping old partitions",
-                extra={"error": str(e), "table": table_name}
+                "Error dropping year partitions",
+                extra={"error": str(e), "table": table_name, "year": year}
             )
             raise
 

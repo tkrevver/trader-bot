@@ -1,0 +1,37 @@
+meta {
+  name: Create Partitions
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/tasks/partitions/create?year=2025&table_name=ohlcv_1min
+  body: none
+  auth: none
+}
+
+params:query {
+  year: 2025
+  table_name: ohlcv_1min
+}
+
+docs {
+  Create database partitions for all weeks in a specific year.
+  
+  This endpoint is SAFE TO RE-RUN - existing partitions will be skipped.
+  
+  Query Parameters (REQUIRED):
+  - year: Year to create partitions for (2020-2030)
+  - table_name: Name of the partitioned table (e.g., ohlcv_1min)
+  
+  Returns:
+  - created: List of newly created partitions with dates
+  - skipped: List of existing partitions that were skipped
+  - summary: Total counts (total_created, total_skipped, total_existing)
+  
+  Examples:
+  - Create partitions for 2024: ?year=2024&table_name=ohlcv_1min
+  - Create partitions for 2023: ?year=2023&table_name=ohlcv_1min
+  
+  Note: Keep historical data for backtesting - don't delete old partitions!
+}

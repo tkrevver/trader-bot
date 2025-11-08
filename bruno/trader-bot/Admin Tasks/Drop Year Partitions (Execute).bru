@@ -1,0 +1,44 @@
+meta {
+  name: Drop Year Partitions (Execute)
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/tasks/partitions/drop-year?year=2026&table_name=ohlcv_1min&confirm=true
+  body: none
+  auth: none
+}
+
+params:query {
+  year: 2026
+  table_name: ohlcv_1min
+  confirm: true
+}
+
+docs {
+  ⚠️⚠️⚠️ ACTUALLY DROP all partitions for a year ⚠️⚠️⚠️
+  
+  This PERMANENTLY DELETES DATA - USE WITH EXTREME CAUTION!
+  
+  Before running this:
+  1. Run "Drop Year Partitions (Preview)" first to see what will be deleted
+  2. Verify the partition list is correct
+  3. Make sure you can backfill this data from Alpaca/Tradier
+  4. Only then run this request
+  
+  Query Parameters (REQUIRED):
+  - year: Year to drop partitions for (2020-2030)
+  - table_name: Name of the partitioned table
+  - confirm: MUST BE TRUE to execute (this is set to true)
+  
+  After dropping:
+  1. Recreate partitions: POST /partitions/create?year=YYYY&table_name=ohlcv_1min
+  2. Backfill data: POST /market-data/SPY/backfill with appropriate date range
+  
+  Example workflow to fix 2025 partitions:
+  1. Preview: Drop Year Partitions (Preview) - confirm=false
+  2. Execute: THIS REQUEST - confirm=true
+  3. Recreate: Create Partitions for 2025
+  4. Backfill: Backfill Dec 30, 2024 through current date
+}

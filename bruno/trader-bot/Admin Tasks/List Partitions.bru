@@ -1,0 +1,39 @@
+meta {
+  name: List Partitions
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/tasks/partitions/list?table_name=ohlcv_1min&year=2025
+  body: none
+  auth: none
+}
+
+params:query {
+  table_name: ohlcv_1min
+  year: 2025
+}
+
+docs {
+  List existing partitions for a table.
+  
+  Optionally filter by year to see only partitions for a specific year.
+  
+  Query Parameters (REQUIRED):
+  - table_name: Name of the partitioned table (e.g., ohlcv_1min)
+  
+  Query Parameters (OPTIONAL):
+  - year: Filter by specific year (e.g., 2024)
+  
+  Returns:
+  - table: Table name
+  - year: Year filter (null if not filtered)
+  - partitions: Array of partition details (name, bounds, size)
+  - total_count: Total number of partitions
+  
+  Examples:
+  - List all partitions: ?table_name=ohlcv_1min
+  - List 2024 partitions only: ?table_name=ohlcv_1min&year=2024
+  - List 2023 partitions only: ?table_name=ohlcv_1min&year=2023
+}
