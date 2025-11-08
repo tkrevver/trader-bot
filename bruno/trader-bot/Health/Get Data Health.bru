@@ -1,0 +1,51 @@
+meta {
+  name: Get Data Health
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/api/v1/market-data/:symbol/health?days_back=1
+  body: none
+  auth: none
+}
+
+params:query {
+  days_back: 1
+  ~hours_back: 24
+}
+
+params:path {
+  symbol: SPY
+}
+
+docs {
+  Get data health check for a symbol (includes gap detection)
+
+  Query params (provide EITHER hours_back OR days_back, not both):
+  - days_back: Number of days to check (1-30)
+  - hours_back: Number of hours to check (1-720)
+  - Default: 24 hours (1 day) if neither specified
+
+  Returns:
+  - symbol: Trading symbol
+  - hours_checked: Number of hours analyzed
+  - bar_count: Total bars in time range
+  - latest_bar_time: Timestamp of most recent bar (in configured timezone)
+  - gap_count: Number of gaps detected
+  - gaps: List of detected gaps with start/end times and missing bar counts
+  - healthy: Boolean (false if gaps exist or no data)
+
+  ⚠️ NOTE: The scheduled data_health_check job is DISABLED
+  This endpoint must be called manually when needed because:
+  - No database-backed issue tracking system exists yet
+  - Scheduled job would log the same failures repeatedly (96+ duplicates/day)
+  - No state tracking to detect when health status changes
+
+  Use this for:
+  - Manual data quality verification
+  - Gap detection (replaces /gaps endpoint)
+  - Checking data freshness (latest_bar_time)
+  - Debugging data ingestion issues
+  - One-time health analysis
+}

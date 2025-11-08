@@ -62,15 +62,49 @@ Four materialized views aggregate 1-minute data into larger timeframes:
 - Auto-refreshes every 5 minutes via scheduler
 - Can be manually refreshed via API
 
+## Timezone Handling
+
+**Storage:** All timestamps are stored in the database as `TIMESTAMP WITH TIME ZONE` in UTC.
+
+**Display:** API responses return timestamps in the configured timezone (default: `America/New_York`) via `TIMEZONE` environment variable.
+
+**Conversion Pattern:**
+
+The application uses Pydantic `@field_serializer` decorators to automatically convert UTC timestamps to the configured timezone when serializing API responses:
+
+```python
+@field_serializer("time")
+def serialize_time(self, dt: datetime) -> str:
+    """Serialize datetime to configured timezone."""
+    tz = pytz.timezone(settings.timezone)
+    if dt.tzinfo is None:
+        dt = pytz.utc.localize(dt)
+    dt_local = dt.astimezone(tz)
+    return dt_local.isoformat()
+```
+
+**Models with Timezone Serialization:**
+
+- `OHLCVBar` - Serializes `time` field
+- `MarketDataGap` - Serializes `start_time`, `end_time`, `detected_at` fields
+- `HealthCheckResponse` - Serializes `latest_bar_time` field
+
+**Important:** Service layer returns raw `datetime` objects. The API layer uses Pydantic response models (e.g., `LatestBarResponse`, `HealthCheckResponse`) which automatically trigger the field serializers. Never manually convert timestamps to strings in the service layer.
+
+**Utility Function:**
+
+`MarketHours.convert_to_local_tz(dt: datetime)` is available for manual conversion when needed outside of API responses.
+
 ## Project Structure
 
 ```
 trader-bot/
 ├── app/
-│   ├── api/                    # API endpoints
+│   ├── api/                    # API endpoints (thin wrappers, delegate to services)
 │   │   ├── health.py          # Health check endpoints
 │   │   ├── market_data.py     # Market data CRUD + backfill
-│   │   └── scheduler.py       # Scheduler management
+│   │   ├── scheduler.py       # Scheduler management
+│   │   └── tasks.py           # Admin tasks (partition management)
 │   ├── db/
 │   │   ├── connection.py      # Database pool management
 │   │   ├── partition_manager.py  # Auto-create partitions
@@ -86,20 +120,20 @@ trader-bot/
 │   │   ├── orders.py
 │   │   ├── positions.py
 │   │   └── strategy.py
-│   ├── services/
+│   ├── services/               # Business logic layer
 │   │   ├── base_market_data_client.py  # Abstract base class for data providers
 │   │   ├── tradier_client.py  # Tradier REST API client
 │   │   ├── alpaca_client.py   # Alpaca REST API client
 │   │   ├── market_data_client_factory.py  # Provider factory/selector
-│   │   ├── data_ingestion.py  # Orchestrates data fetching (provider-agnostic)
-│   │   └── materialized_view_refresh.py
+│   │   ├── data_ingestion.py  # Data orchestration (fetching, backfill validation, stats)
+│   │   └── materialized_view_refresh.py  # View refresh + validation
 │   ├── tasks/
 │   │   └── scheduler.py       # APScheduler job definitions
 │   ├── utils/
 │   │   ├── logger.py          # Structured logging
 │   │   └── market_hours.py    # US market hours/holidays
 │   └── config.py              # Settings from environment
-├── tests/                     # Pytest test suite
+├── tests/                     # Pytest test suite (45 tests, all passing)
 │   ├── conftest.py            # Shared fixtures
 │   ├── test_database.py       # Database tests
 │   ├── test_tradier_client.py # Tradier API client tests
@@ -107,9 +141,10 @@ trader-bot/
 │   ├── test_market_data_client_factory.py  # Factory pattern tests
 │   ├── test_market_hours.py   # Market hours tests
 │   ├── test_market_data_repository.py  # Repository tests
-│   ├── test_data_ingestion.py # Ingestion tests
+│   ├── test_data_ingestion.py # Ingestion + backfill validation + stats tests
 │   ├── test_backfill.py       # Backfill tests
-│   └── test_gap_detection.py  # Gap detection tests
+│   ├── test_gap_detection.py  # Gap detection tests
+│   └── test_materialized_view_refresh.py  # View refresh + validation tests
 ├── bruno/trader-bot/          # API request collection
 ├── alembic/                   # Database migrations
 ├── main.py                    # FastAPI app entry point (ROOT, not app/)
@@ -124,14 +159,15 @@ Base URL: `http://localhost:8000`
 ### Health
 - `GET /health` - Basic health check
 - `GET /health/detailed` - Component status (database, scheduler, tradier, broker)
+- `GET /api/v1/market-data/{symbol}/health` - Data quality metrics and gap detection
+  - Query params: `days_back` (1-30) OR `hours_back` (1-720), defaults to 24 hours
+  - Returns: bar_count, latest_bar_time, gap_count, gaps list, healthy status
 
 ### Market Data
 - `GET /api/v1/market-data/{symbol}/latest` - Latest bar for timeframe
 - `GET /api/v1/market-data/{symbol}/history` - Historical bars with time range
-- `GET /api/v1/market-data/{symbol}/gaps` - Detect missing data gaps
 - `POST /api/v1/market-data/{symbol}/ingest-latest` - Trigger ingestion of latest bar (called by scheduler)
 - `POST /api/v1/market-data/{symbol}/backfill` - Manual backfill from configured data provider
-- `GET /api/v1/market-data/{symbol}/health` - Data quality metrics
 - `GET /api/v1/market-data/{symbol}/stats` - Coverage statistics
 
 ### Materialized Views
@@ -145,14 +181,20 @@ Base URL: `http://localhost:8000`
 - `POST /api/v1/scheduler/jobs/{job_id}/resume` - Resume job
 
 **Valid Job IDs:**
-- `data_ingestion` - 1-minute data pulls
-- `gap_detection` - Detect missing data
-- `data_health_check` - Data quality checks
-- `refresh_materialized_views` - Refresh aggregated views
+- `data_ingestion` - 1-minute data pulls (ACTIVE)
+- `refresh_materialized_views` - Refresh aggregated views (ACTIVE)
+- `data_health_check` - Data quality checks with gap detection (DISABLED - needs issue tracking)
+
+### Admin Tasks
+- `POST /api/v1/tasks/partitions/create?year=YYYY&table_name=ohlcv_1min` - Create partitions for a year
+- `GET /api/v1/tasks/partitions/list?table_name=ohlcv_1min&year=YYYY` - List partitions (optional year filter)
+- `DELETE /api/v1/tasks/partitions/drop-year?year=YYYY&table_name=ohlcv_1min&confirm=true` - Drop year partitions (requires confirm=true)
 
 ## Scheduled Jobs
 
-APScheduler runs 4 background jobs during market hours. **All jobs call API endpoints** (not services directly) to ensure consistent flow and proper database connection handling.
+APScheduler runs 2 active background jobs during market hours. **All jobs call API endpoints** (not services directly) to ensure consistent flow and proper database connection handling.
+
+### Active Jobs:
 
 1. **data_ingestion** - Every minute at :05 seconds
    - Calls `POST /api/v1/market-data/{symbol}/ingest-latest`
@@ -160,20 +202,19 @@ APScheduler runs 4 background jobs during market hours. **All jobs call API endp
    - Prevents duplicates
    - Only runs during market hours (9:30 AM - 4:00 PM ET)
 
-2. **gap_detection** - Every hour at :10 past the hour
-   - Calls `GET /api/v1/market-data/{symbol}/gaps?days_back=7`
-   - Scans for missing bars in the last 7 days
-   - Logs gaps for investigation (does NOT auto-fill)
-
-3. **data_health_check** - Every 15 minutes
-   - Calls `GET /api/v1/market-data/{symbol}/health?hours_back=24`
-   - Checks data freshness and quality
-   - Logs warnings if data is unhealthy
-
-4. **refresh_materialized_views** - Every 5 minutes
+2. **refresh_materialized_views** - Every 5 minutes
    - Calls `POST /api/v1/market-data/views/refresh?concurrently=true`
    - Refreshes all 4 materialized views concurrently
    - Updates aggregated timeframe data
+
+### Disabled Jobs (Require Issue Tracking System):
+
+3. **data_health_check** - DISABLED (would run every 15 minutes)
+   - Would call `GET /api/v1/market-data/{symbol}/health?days_back=7`
+   - Includes gap detection and data quality checks
+   - **Problem:** Logs same health failures repeatedly (96+ duplicate warnings/day)
+   - **Solution needed:** Database-backed issue tracking with state change detection
+   - **Alternative:** Manually call API endpoint when needed
 
 **Market Hours:**
 - Open: 9:30 AM ET
@@ -444,10 +485,11 @@ Bruno collection location: `bruno/trader-bot/`
 - `symbol`: SPY
 
 **Request folders:**
-1. Health (2 requests)
-2. Market Data (6 requests)
+1. Health (3 requests - basic health, detailed health, data health with gap detection)
+2. Market Data (5 requests - CRUD operations only)
 3. Materialized Views (3 requests)
 4. Scheduler (3 requests)
+5. Admin Tasks (4 requests - partition management)
 
 ## Database Migrations
 
@@ -527,29 +569,43 @@ Structured JSON logging via `app/utils/logger.py`
 ## Important Quirks & Gotchas
 
 1. **Main app location:** `main.py` is in project root, NOT `app/main.py`
-2. **Scheduler architecture:** All scheduled jobs call API endpoints (not services) for consistent DB connection handling
-3. **Data Provider Selection:** Set `MARKET_DATA_PROVIDER` env var to switch between Tradier and Alpaca
-4. **Tradier Cost:** $10/month Pro plan for real-time data, 20-day historical limit
-5. **Alpaca Cost:** FREE tier with 5+ years historical data (IEX exchange only)
-6. **TimescaleDB:** We're NOT using it - manual partitioning only
-7. **Historical Limits:** Provider-dependent (Tradier: 20 days, Alpaca: 5+ years)
-8. **Market hours:** Jobs only run 9:30 AM - 4:00 PM ET on trading days
-9. **Partition auto-creation:** Happens on startup, not in migrations
-10. **Materialized views:** Already exist from previous migration - don't recreate
-11. **Concurrent refresh:** Requires unique index, which exists
-12. **Gap detection vs backfill:** `/gaps` only detects and logs, `/backfill` actually fills gaps
-13. **VWAP & Trade Count:** Only available with Alpaca (Tradier doesn't provide these)
+2. **Layered architecture:** API endpoints are thin wrappers that delegate to service layer for business logic
+3. **Scheduler architecture:** All scheduled jobs call API endpoints (not services) for consistent DB connection handling
+4. **Data Provider Selection:** Set `MARKET_DATA_PROVIDER` env var to switch between Tradier and Alpaca
+5. **Tradier Cost:** $10/month Pro plan for real-time data, 20-day historical limit
+6. **Alpaca Cost:** FREE tier with 5+ years historical data (IEX exchange only)
+7. **TimescaleDB:** We're NOT using it - manual partitioning only
+8. **Historical Limits:** Provider-dependent (Tradier: 20 days, Alpaca: 5+ years)
+9. **Market hours:** Jobs only run 9:30 AM - 4:00 PM ET on trading days
+10. **Partition auto-creation:** Happens on startup, not in migrations
+11. **Materialized views:** Already exist from previous migration - don't recreate
+12. **Concurrent refresh:** Requires unique index, which exists
+13. **Gap detection vs backfill:** `/gaps` only detects and logs, `/backfill` actually fills gaps
+14. **VWAP & Trade Count:** Only available with Alpaca (Tradier doesn't provide these)
 
 ## Next Steps (Not Yet Implemented)
 
+### Data Quality & Monitoring:
+- **Issue tracking system** - Database-backed tracking of data gaps and health failures
+  - Store issues with first_seen, last_seen, resolved_at timestamps
+  - Deduplication logic to prevent duplicate log spam
+  - Admin UI to view/resolve unresolved issues
+  - Re-enable gap_detection and data_health_check scheduled jobs
+- Log aggregation (CloudWatch, Datadog, Elasticsearch)
+- Alerting (email/Slack notifications for critical issues)
+- Monitoring dashboard
+
+### Trading Implementation:
 - Trading strategies (RSI, MACD, etc.)
 - Signal generation
 - Order execution via broker APIs (Alpaca Trading API, Tradier, etc.)
 - Position management
 - Risk management
-- Real-time WebSocket data feed (both Alpaca and Tradier support this)
 - Backtesting framework
 - Performance analytics
+
+### Infrastructure:
+- Real-time WebSocket data feed (both Alpaca and Tradier support this)
 - Additional data providers (Polygon.io, Interactive Brokers, etc.)
 
 ## Testing

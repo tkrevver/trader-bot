@@ -175,3 +175,40 @@ class MarketDataGap(BaseModel):
                 "detected_at": "2025-01-15T10:10:00-05:00"
             }
         }
+
+
+class HealthCheckResponse(BaseModel):
+    """Response model for data health check."""
+
+    symbol: str
+    hours_checked: int = Field(..., description="Number of hours checked")
+    bar_count: int = Field(..., description="Total bars in time range")
+    latest_bar_time: Optional[datetime] = Field(None, description="Timestamp of most recent bar")
+    gap_count: int = Field(..., description="Number of gaps detected")
+    gaps: list[MarketDataGap] = Field(default_factory=list, description="List of detected gaps")
+    healthy: bool = Field(..., description="True if no gaps and data exists")
+
+    @field_serializer("latest_bar_time")
+    def serialize_latest_bar_time(self, dt: Optional[datetime]) -> Optional[str]:
+        """Serialize latest_bar_time to configured timezone."""
+        if dt is None:
+            return None
+        tz = pytz.timezone(settings.timezone)
+        if dt.tzinfo is None:
+            dt = pytz.utc.localize(dt)
+        dt_local = dt.astimezone(tz)
+        return dt_local.isoformat()
+
+    class Config:
+        """Pydantic config."""
+        json_schema_extra = {
+            "example": {
+                "symbol": "SPY",
+                "hours_checked": 24,
+                "bar_count": 390,
+                "latest_bar_time": "2025-01-15T16:00:00-05:00",
+                "gap_count": 0,
+                "gaps": [],
+                "healthy": True
+            }
+        }

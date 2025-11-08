@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from app.db.repositories.market_data import MarketDataRepository
-from app.models.market_data import BarResponse, LatestBarResponse, MarketDataGap
+from app.models.market_data import BarResponse, LatestBarResponse, MarketDataGap, HealthCheckResponse
 from app.services.data_ingestion import get_data_ingestion_service
 from app.services.materialized_view_refresh import MaterializedViewRefreshService
 from app.utils.logger import logger
@@ -123,56 +123,6 @@ async def get_historical_bars(
         raise HTTPException(
             status_code=500,
             detail=f"Error fetching historical bars: {str(e)}"
-        )
-
-
-@router.get("/{symbol}/gaps", response_model=list[MarketDataGap])
-async def check_for_gaps(
-    symbol: str,
-    days_back: int = Query(
-        default=5,
-        description="Number of days to check back",
-        ge=1,
-        le=30
-    )
-):
-    """
-    Check for gaps in market data.
-
-    Args:
-        symbol: Trading symbol (e.g., "SPY")
-        days_back: Number of days to check back (1-30)
-
-    Returns:
-        list[MarketDataGap]: List of detected gaps
-    """
-    try:
-        end_time = datetime.utcnow()
-        start_time = end_time - timedelta(days=days_back)
-
-        repo = MarketDataRepository()
-        gaps = await repo.check_for_gaps(
-            symbol=symbol.upper(),
-            start_time=start_time,
-            end_time=end_time,
-            expected_interval_minutes=1
-        )
-
-        logger.info(
-            "Gap check completed",
-            extra={"symbol": symbol, "gap_count": len(gaps)}
-        )
-
-        return gaps
-
-    except Exception as e:
-        logger.error(
-            "Error checking for gaps",
-            extra={"symbol": symbol, "error": str(e)}
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error checking for gaps: {str(e)}"
         )
 
 
@@ -296,14 +246,20 @@ async def backfill_data(
         )
 
 
-@router.get("/{symbol}/health")
+@router.get("/{symbol}/health", response_model=HealthCheckResponse)
 async def get_data_health(
     symbol: str,
-    hours_back: int = Query(
-        default=24,
-        description="Number of hours to check",
+    hours_back: Optional[int] = Query(
+        default=None,
+        description="Number of hours to check (1-720)",
         ge=1,
-        le=168  # 1 week max
+        le=720
+    ),
+    days_back: Optional[int] = Query(
+        default=None,
+        description="Number of days to check (1-30)",
+        ge=1,
+        le=30
     )
 ):
     """
@@ -311,12 +267,29 @@ async def get_data_health(
 
     Args:
         symbol: Trading symbol (e.g., "SPY")
-        hours_back: Number of hours to check back (1-168)
+        hours_back: Number of hours to check back (1-720)
+        days_back: Number of days to check back (1-30)
+
+    Note: Provide either hours_back OR days_back (not both). Defaults to 24 hours if neither specified.
 
     Returns:
-        dict: Health check results
+        HealthCheckResponse: Health check results with timestamps in configured timezone
     """
     try:
+        # Validate parameters
+        if hours_back is not None and days_back is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide either 'hours_back' OR 'days_back', not both"
+            )
+
+        # Calculate hours_back from days_back if provided
+        if days_back is not None:
+            hours_back = days_back * 24
+        elif hours_back is None:
+            # Default to 24 hours if neither specified
+            hours_back = 24
+
         data_ingestion = get_data_ingestion_service()
         health = await data_ingestion.get_data_health_check(
             symbol=symbol.upper(),

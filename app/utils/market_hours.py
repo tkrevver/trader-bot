@@ -46,6 +46,25 @@ class MarketHours:
         return datetime.now(cls.NY_TZ)
 
     @classmethod
+    def convert_to_local_tz(cls, dt: datetime) -> datetime:
+        """
+        Convert a datetime to the configured timezone.
+
+        Args:
+            dt: Datetime to convert (must be timezone-aware)
+
+        Returns:
+            datetime: Datetime in configured timezone
+        """
+        if dt.tzinfo is None:
+            # Assume UTC if no timezone
+            dt = pytz.utc.localize(dt)
+
+        # Get configured timezone
+        local_tz = pytz.timezone(settings.timezone)
+        return dt.astimezone(local_tz)
+
+    @classmethod
     def is_market_open(cls, dt: Optional[datetime] = None) -> bool:
         """
         Check if the US stock market is currently open for regular trading.

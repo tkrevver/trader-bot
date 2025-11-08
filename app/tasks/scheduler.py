@@ -2,7 +2,6 @@
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from datetime import datetime
 import asyncio
 import aiohttp
 
@@ -59,51 +58,6 @@ class SchedulerService:
         except Exception as e:
             logger.error(
                 "Error in data ingestion job",
-                extra={"error": str(e)}
-            )
-
-    async def gap_detection_job(self):
-        """
-        Scheduled job to detect gaps (logs only, does not backfill).
-
-        Runs once per hour during market hours.
-        Respects extended hours setting from config.
-        """
-        try:
-            logger.info("Running gap detection job")
-
-            # Check if market is open (respects extended hours setting)
-            if not MarketHours.is_extended_market_open():
-                logger.debug("Market is closed, skipping gap detection job")
-                return
-
-            # Call the gaps endpoint for each symbol
-            async with aiohttp.ClientSession() as session:
-                for symbol in self.symbols:
-                    url = f"{self.api_base_url}/market-data/{symbol}/gaps?days_back=7"
-                    try:
-                        async with session.get(url) as response:
-                            if response.status == 200:
-                                gaps = await response.json()
-                                if gaps:
-                                    logger.warning(
-                                        "Gaps detected",
-                                        extra={"symbol": symbol, "gap_count": len(gaps)}
-                                    )
-                            else:
-                                logger.error(
-                                    "Gap detection failed",
-                                    extra={"symbol": symbol, "status": response.status}
-                                )
-                    except Exception as e:
-                        logger.error(
-                            "Error calling gaps endpoint",
-                            extra={"symbol": symbol, "error": str(e)}
-                        )
-
-        except Exception as e:
-            logger.error(
-                "Error in gap detection job",
                 extra={"error": str(e)}
             )
 
@@ -220,31 +174,34 @@ class SchedulerService:
                 misfire_grace_time=30  # Allow 30 seconds grace time for missed jobs
             )
 
-            # Gap detection job - runs hourly at :10 minutes past the hour
-            self.scheduler.add_job(
-                self.gap_detection_job,
-                trigger=CronTrigger(
-                    minute=10,
-                    timezone='America/New_York'
-                ),
-                id='gap_detection',
-                name='Gap Detection and Backfill',
-                replace_existing=True,
-                max_instances=1
-            )
+            # NOTE: Data health check job is DISABLED
+            # This job logs issues to stdout without persistence or deduplication.
+            # Without a database-backed issue tracking system, it will:
+            # - Re-log the same health failures every 15 min (96+ duplicates per day)
+            # - Lose all issue history on app restart
+            # - Not work correctly with multiple app instances
+            #
+            # To enable this job properly, implement:
+            # 1. Database table for tracking issues (first_seen, last_seen, resolved_at)
+            # 2. Deduplication logic (only log when issue state changes)
+            # 3. Auto-resolution (mark resolved when health restored)
+            # 4. Admin UI endpoint to view/manage unresolved issues
+            #
+            # For now, use manual API calls:
+            # - GET /api/v1/market-data/{symbol}/health?days_back=7
 
-            # Data health check job - runs every 15 minutes
-            self.scheduler.add_job(
-                self.data_health_check_job,
-                trigger=CronTrigger(
-                    minute='*/15',
-                    timezone='America/New_York'
-                ),
-                id='data_health_check',
-                name='Data Health Check',
-                replace_existing=True,
-                max_instances=1
-            )
+            # Data health check job - runs every 15 minutes (includes gap detection)
+            # self.scheduler.add_job(
+            #     self.data_health_check_job,
+            #     trigger=CronTrigger(
+            #         minute='*/15',
+            #         timezone='America/New_York'
+            #     ),
+            #     id='data_health_check',
+            #     name='Data Health Check',
+            #     replace_existing=True,
+            #     max_instances=1
+            # )
 
             # Materialized view refresh job - runs every 5 minutes
             # Refreshes aggregated timeframe views (5min, 15min, 30min, daily)

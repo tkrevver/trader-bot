@@ -353,7 +353,7 @@ class DataIngestionService:
             hours_back: Number of hours to check back
 
         Returns:
-            dict: Health check results
+            dict: Health check results (timestamps will be serialized to configured timezone by API layer)
         """
         try:
             end_time = datetime.utcnow()
@@ -376,26 +376,26 @@ class DataIngestionService:
                 end_time=end_time
             )
 
+            # Return raw gap objects - API layer will serialize to configured timezone
             health = {
                 "symbol": symbol,
                 "hours_checked": hours_back,
                 "bar_count": bar_count,
-                "latest_bar_time": latest_bar.time.isoformat() if latest_bar else None,
+                "latest_bar_time": latest_bar.time if latest_bar else None,
                 "gap_count": len(gaps),
-                "gaps": [
-                    {
-                        "start": gap.start_time.isoformat(),
-                        "end": gap.end_time.isoformat(),
-                        "missing_bars": gap.missing_bars
-                    }
-                    for gap in gaps
-                ],
+                "gaps": gaps,  # Return MarketDataGap objects with datetime fields
                 "healthy": len(gaps) == 0 and bar_count > 0
             }
 
             logger.info(
                 "Data health check completed",
-                extra=health
+                extra={
+                    "symbol": symbol,
+                    "hours_checked": hours_back,
+                    "bar_count": bar_count,
+                    "gap_count": len(gaps),
+                    "healthy": health["healthy"]
+                }
             )
 
             return health
