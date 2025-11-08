@@ -29,6 +29,11 @@
       "tool": "WebSearch",
       "pattern": ".*",
       "description": "Auto-approve all web searches"
+    },
+    {
+      "tool": "WebFetch",
+      "pattern": ".*",
+      "description": "Auto-approve all web fetches"
     }
   ]
 }
