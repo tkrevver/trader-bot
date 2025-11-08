@@ -121,6 +121,14 @@ class TradierClient(BaseMarketDataClient):
                 response.raise_for_status()
                 data = await response.json()
 
+                # Handle None response
+                if data is None:
+                    logger.warning(
+                        "Tradier API returned None",
+                        extra={"symbol": symbol}
+                    )
+                    return []
+
                 # Tradier returns data under 'series' -> 'data' key
                 if "series" in data and "data" in data["series"]:
                     bars = data["series"]["data"]
@@ -153,13 +161,13 @@ class TradierClient(BaseMarketDataClient):
                     "message": str(e)
                 }
             )
-            raise
+            return []
         except Exception as e:
             logger.error(
                 "Error fetching timesales from Tradier",
                 extra={"symbol": symbol, "error": str(e)}
             )
-            raise
+            return []
 
     async def fetch_latest_bar(
         self,
