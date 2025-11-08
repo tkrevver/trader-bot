@@ -411,6 +411,155 @@ class DataIngestionService:
                 "error": str(e)
             }
 
+    async def backfill_with_validation(
+        self,
+        symbol: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        days: Optional[int] = None,
+        max_days: int = 30
+    ) -> dict:
+        """
+        Backfill historical data with date validation and automatic gap detection.
+
+        Supports two ways to specify date range:
+        1. Explicit dates: Provide both start_date and end_date
+        2. Days back: Provide days parameter (e.g., days=7 for last 7 days)
+
+        Args:
+            symbol: Trading symbol
+            start_date: Start date for backfill (optional if using days)
+            end_date: End date for backfill (optional if using days)
+            days: Number of days to backfill from today (optional if using dates)
+            max_days: Maximum allowed days in range (default: 30)
+
+        Returns:
+            dict: Backfill results including gap detection
+
+        Raises:
+            ValueError: If date parameters are invalid
+        """
+        try:
+            # Calculate dates based on input
+            if days is not None:
+                # Use days parameter
+                end_date = datetime.utcnow()
+                start_date = end_date - timedelta(days=days)
+            elif start_date is None or end_date is None:
+                # Neither days nor both dates provided
+                raise ValueError("Either provide 'days' parameter OR both 'start_date' and 'end_date'")
+
+            logger.info(
+                "Backfill with validation requested",
+                extra={
+                    "symbol": symbol,
+                    "start": start_date.isoformat(),
+                    "end": end_date.isoformat()
+                }
+            )
+
+            # Validate date range
+            if start_date >= end_date:
+                raise ValueError("start_date must be before end_date")
+
+            # Limit backfill range to avoid API rate limits
+            if (end_date - start_date).days > max_days:
+                raise ValueError(f"Date range too large. Maximum {max_days} days allowed.")
+
+            # Perform backfill
+            count = await self.backfill_historical_data(
+                symbol=symbol,
+                start_date=start_date,
+                end_date=end_date
+            )
+
+            # Always check for gaps to ensure data completeness
+            gaps = await self.detect_and_backfill_gaps(
+                symbol=symbol,
+                days_back=(end_date - start_date).days
+            )
+
+            return {
+                "symbol": symbol,
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+                "bars_inserted": count,
+                "gaps_found": len(gaps),
+                "gaps": [
+                    {
+                        "start_time": gap.start_time.isoformat(),
+                        "end_time": gap.end_time.isoformat(),
+                        "missing_bars": gap.missing_bars
+                    }
+                    for gap in gaps
+                ],
+                "success": count > 0
+            }
+
+        except ValueError as e:
+            logger.error(
+                "Validation error in backfill",
+                extra={"symbol": symbol, "error": str(e)}
+            )
+            raise
+        except Exception as e:
+            logger.error(
+                "Error in backfill with validation",
+                extra={"symbol": symbol, "error": str(e)}
+            )
+            raise
+
+    async def get_market_data_stats(self, symbol: str) -> dict:
+        """
+        Get comprehensive statistics about market data for a symbol.
+
+        Args:
+            symbol: Trading symbol
+
+        Returns:
+            dict: Market data statistics including bar counts and latest bar
+        """
+        try:
+            # Get bar counts for different time ranges
+            now = datetime.utcnow()
+            day_ago = now - timedelta(days=1)
+            week_ago = now - timedelta(weeks=1)
+            month_ago = now - timedelta(days=30)
+
+            stats = {
+                "symbol": symbol,
+                "bar_counts": {
+                    "last_24h": await self.market_data_repo.get_bar_count(symbol, day_ago, now),
+                    "last_7d": await self.market_data_repo.get_bar_count(symbol, week_ago, now),
+                    "last_30d": await self.market_data_repo.get_bar_count(symbol, month_ago, now),
+                    "total": await self.market_data_repo.get_bar_count(symbol)
+                },
+                "latest_bar": None
+            }
+
+            # Get latest bar
+            latest = await self.market_data_repo.get_latest_bar(symbol)
+            if latest:
+                stats["latest_bar"] = {
+                    "time": latest.time.isoformat(),
+                    "close": str(latest.close),
+                    "volume": latest.volume
+                }
+
+            logger.info(
+                "Market data stats retrieved",
+                extra={"symbol": symbol, "total_bars": stats["bar_counts"]["total"]}
+            )
+
+            return stats
+
+        except Exception as e:
+            logger.error(
+                "Error getting market data stats",
+                extra={"symbol": symbol, "error": str(e)}
+            )
+            raise
+
 
 # Singleton instance
 _data_ingestion_service: Optional[DataIngestionService] = None

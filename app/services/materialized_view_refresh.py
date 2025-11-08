@@ -10,6 +10,23 @@ class MaterializedViewRefreshService:
     VIEWS = ["ohlcv_5min", "ohlcv_15min", "ohlcv_30min", "ohlcv_daily"]
 
     @staticmethod
+    def validate_view_name(view_name: str) -> None:
+        """
+        Validate that view name is one of the allowed views.
+
+        Args:
+            view_name: Name of the view to validate
+
+        Raises:
+            ValueError: If view name is not valid
+        """
+        if view_name not in MaterializedViewRefreshService.VIEWS:
+            raise ValueError(
+                f"Invalid view name: {view_name}. "
+                f"Must be one of: {', '.join(MaterializedViewRefreshService.VIEWS)}"
+            )
+
+    @staticmethod
     async def refresh_view(view_name: str, concurrently: bool = True) -> bool:
         """
         Refresh a single materialized view.

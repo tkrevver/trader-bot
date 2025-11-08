@@ -263,75 +263,28 @@ async def backfill_data(
         dict: Backfill results including gap detection
     """
     try:
-        # Calculate dates based on input
-        if days is not None:
-            # Use days parameter
-            end_date = datetime.utcnow()
-            start_date = end_date - timedelta(days=days)
-        elif start_date is None or end_date is None:
-            # Neither days nor both dates provided
-            raise HTTPException(
-                status_code=400,
-                detail="Either provide 'days' parameter OR both 'start_date' and 'end_date'"
-            )
-
         logger.info(
-            "Manual backfill triggered",
-            extra={
-                "symbol": symbol,
-                "start": start_date.isoformat(),
-                "end": end_date.isoformat()
-            }
+            "Manual backfill triggered via API",
+            extra={"symbol": symbol, "days": days}
         )
 
-        # Validate date range
-        if start_date >= end_date:
-            raise HTTPException(
-                status_code=400,
-                detail="start_date must be before end_date"
-            )
-
-        # Limit backfill range to avoid API rate limits
-        max_days = 30
-        if (end_date - start_date).days > max_days:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Date range too large. Maximum {max_days} days allowed."
-            )
-
-        # Perform backfill
         data_ingestion = get_data_ingestion_service()
-        count = await data_ingestion.backfill_historical_data(
+        result = await data_ingestion.backfill_with_validation(
             symbol=symbol.upper(),
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
+            days=days,
+            max_days=30
         )
 
-        # Always check for gaps to ensure data completeness
-        gaps = await data_ingestion.detect_and_backfill_gaps(
-            symbol=symbol.upper(),
-            days_back=(end_date - start_date).days
+        return result
+
+    except ValueError as e:
+        # Validation errors (date range issues, missing params, etc.)
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
         )
-
-        return {
-            "symbol": symbol.upper(),
-            "start_date": start_date.isoformat(),
-            "end_date": end_date.isoformat(),
-            "bars_inserted": count,
-            "gaps_found": len(gaps),
-            "gaps": [
-                {
-                    "start_time": gap.start_time.isoformat(),
-                    "end_time": gap.end_time.isoformat(),
-                    "missing_bars": gap.missing_bars
-                }
-                for gap in gaps
-            ],
-            "success": count > 0
-        }
-
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(
             "Error backfilling data",
@@ -395,34 +348,8 @@ async def get_market_data_stats(symbol: str):
         dict: Market data statistics
     """
     try:
-        repo = MarketDataRepository()
-
-        # Get bar counts for different time ranges
-        now = datetime.utcnow()
-        day_ago = now - timedelta(days=1)
-        week_ago = now - timedelta(weeks=1)
-        month_ago = now - timedelta(days=30)
-
-        stats = {
-            "symbol": symbol.upper(),
-            "bar_counts": {
-                "last_24h": await repo.get_bar_count(symbol.upper(), day_ago, now),
-                "last_7d": await repo.get_bar_count(symbol.upper(), week_ago, now),
-                "last_30d": await repo.get_bar_count(symbol.upper(), month_ago, now),
-                "total": await repo.get_bar_count(symbol.upper())
-            },
-            "latest_bar": None
-        }
-
-        # Get latest bar
-        latest = await repo.get_latest_bar(symbol.upper())
-        if latest:
-            stats["latest_bar"] = {
-                "time": latest.time.isoformat(),
-                "close": str(latest.close),
-                "volume": latest.volume
-            }
-
+        data_ingestion = get_data_ingestion_service()
+        stats = await data_ingestion.get_market_data_stats(symbol.upper())
         return stats
 
     except Exception as e:
@@ -440,7 +367,7 @@ async def get_market_data_stats(symbol: str):
 async def refresh_materialized_views(
     view_name: Optional[str] = Query(
         default=None,
-        description="Specific view to refresh (5min, 15min, 30min, daily). If not specified, refreshes all."
+        description="Specific view to refresh (ohlcv_5min, ohlcv_15min, ohlcv_30min, ohlcv_daily). If not specified, refreshes all."
     ),
     concurrently: bool = Query(
         default=True,
@@ -465,19 +392,15 @@ async def refresh_materialized_views(
     """
     try:
         logger.info(
-            "Manual materialized view refresh triggered",
+            "Manual materialized view refresh triggered via API",
             extra={"view_name": view_name, "concurrently": concurrently}
         )
 
         if view_name:
-            # Refresh specific view
-            valid_views = ["ohlcv_5min", "ohlcv_15min", "ohlcv_30min", "ohlcv_daily"]
-            if view_name not in valid_views:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid view name. Must be one of: {', '.join(valid_views)}"
-                )
+            # Validate view name
+            MaterializedViewRefreshService.validate_view_name(view_name)
 
+            # Refresh specific view
             success = await MaterializedViewRefreshService.refresh_view(
                 view_name=view_name,
                 concurrently=concurrently
@@ -496,8 +419,12 @@ async def refresh_materialized_views(
 
             return results
 
-    except HTTPException:
-        raise
+    except ValueError as e:
+        # Validation errors (invalid view name)
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
     except Exception as e:
         logger.error(
             "Error refreshing materialized views",

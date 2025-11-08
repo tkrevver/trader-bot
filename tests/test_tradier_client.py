@@ -18,7 +18,7 @@ async def test_tradier_client_connect():
         assert client.session is not None
         assert not client.session.closed
     finally:
-        await client.disconnect()
+        await client.close()
 
 
 @pytest.mark.asyncio
@@ -57,7 +57,7 @@ async def test_fetch_timesales():
             assert "volume" in bar
 
     finally:
-        await client.disconnect()
+        await client.close()
 
 
 @pytest.mark.asyncio
@@ -81,7 +81,7 @@ async def test_fetch_latest_bar():
             assert "volume" in bar
 
     finally:
-        await client.disconnect()
+        await client.close()
 
 
 def test_parse_bar_to_ohlcv():
