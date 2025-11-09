@@ -231,8 +231,10 @@ class BacktestMetricsCalculator:
         Returns:
             Dictionary with trade statistics
         """
-        # Filter for exit trades (sell trades have P&L)
-        exit_trades = [t for t in trades if t.side == "sell" and t.pnl is not None]
+        # Filter for exit trades (any trade with P&L is a closing trade)
+        # - LONG positions: SELL with pnl
+        # - SHORT positions: BUY with pnl
+        exit_trades = [t for t in trades if t.pnl is not None]
 
         if not exit_trades:
             return {
@@ -281,18 +283,19 @@ class BacktestMetricsCalculator:
         largest_loss = min((t.pnl for t in losing_trades), default=None)
 
         # Calculate holding period (need to match entry/exit trades)
+        # Entry trades have pnl=None, exit trades have pnl set
         holding_periods = []
-        buy_trades = [t for t in trades if t.side == "buy"]
+        entry_trades = [t for t in trades if t.pnl is None]
 
-        for sell_trade in exit_trades:
-            # Find corresponding buy trade (simple: most recent buy before this sell)
-            matching_buys = [
-                t for t in buy_trades if t.executed_at < sell_trade.executed_at
+        for exit_trade in exit_trades:
+            # Find corresponding entry trade (most recent entry before this exit)
+            matching_entries = [
+                t for t in entry_trades if t.executed_at < exit_trade.executed_at
             ]
-            if matching_buys:
-                entry_trade = matching_buys[-1]  # Most recent
+            if matching_entries:
+                entry_trade = matching_entries[-1]  # Most recent
                 holding_period = (
-                    sell_trade.executed_at - entry_trade.executed_at
+                    exit_trade.executed_at - entry_trade.executed_at
                 ).total_seconds() / 60
                 holding_periods.append(holding_period)
 

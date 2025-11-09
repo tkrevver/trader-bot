@@ -117,7 +117,31 @@ class BacktestStatusResponse(BaseModel):
     error_message: Optional[str] = None
 
 
-@router.post("", response_model=BacktestResult, status_code=201)
+class BacktestRunResponse(BaseModel):
+    """Response from running a backtest."""
+
+    backtest_id: int
+    status: BacktestStatus
+    strategy_name: str
+    symbol: str
+    start_date: datetime
+    end_date: datetime
+    initial_capital: Decimal
+
+    # Key metrics summary
+    total_return_pct: Optional[float] = None
+    total_pnl: Optional[Decimal] = None
+    total_trades: int = 0
+    winning_trades: int = 0
+    losing_trades: int = 0
+    win_rate: Optional[float] = None
+    max_drawdown_pct: Optional[float] = None
+    sharpe_ratio: Optional[float] = None
+
+    message: str = "Use /api/v1/backtest/{backtest_id}/detailed for complete trade analysis."
+
+
+@router.post("", response_model=BacktestRunResponse, status_code=201)
 async def run_backtest(
     request: BacktestRequest,
 ):
@@ -127,7 +151,7 @@ async def run_backtest(
         request: Backtest configuration
 
     Returns:
-        Backtest result with metrics
+        Simple response with backtest ID and status
     """
     logger.info(
         f"Received backtest request: {request.strategy_name} on {request.symbol}"
@@ -148,7 +172,27 @@ async def run_backtest(
 
     try:
         result = await runner.run_backtest(config)
-        return result
+
+        # Extract key metrics
+        metrics = result.metrics
+
+        return BacktestRunResponse(
+            backtest_id=result.backtest.id,
+            status=result.backtest.status,
+            strategy_name=result.backtest.strategy_name,
+            symbol=result.backtest.symbol,
+            start_date=result.backtest.start_date,
+            end_date=result.backtest.end_date,
+            initial_capital=result.backtest.initial_capital,
+            total_return_pct=metrics.total_return_pct,
+            total_pnl=metrics.total_pnl,
+            total_trades=metrics.total_trades,
+            winning_trades=metrics.winning_trades,
+            losing_trades=metrics.losing_trades,
+            win_rate=metrics.win_rate,
+            max_drawdown_pct=metrics.max_drawdown_pct,
+            sharpe_ratio=metrics.sharpe_ratio,
+        )
     except Exception as e:
         logger.error(f"Backtest failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -385,6 +429,7 @@ async def get_backtest_detailed(
         metrics = BacktestMetrics(**backtest.metrics)
 
     # Group trades into pairs (entry + exit)
+    # Entry trades have pnl=None, exit trades have pnl set
     trade_details = []
     trade_num = 0
     i = 0
@@ -392,18 +437,22 @@ async def get_backtest_detailed(
     while i < len(trades_raw):
         trade = trades_raw[i]
 
-        # If this is a BUY, look for the corresponding SELL
-        if trade.side.lower() == "buy":
+        # Entry trades have pnl=None
+        if trade.pnl is None:
             trade_num += 1
             entry = trade
             exit_trade = None
 
-            # Look for matching SELL
-            if i + 1 < len(trades_raw) and trades_raw[i + 1].side.lower() == "sell":
+            # Look for matching exit (next trade should be the exit with pnl set)
+            if i + 1 < len(trades_raw) and trades_raw[i + 1].pnl is not None:
                 exit_trade = trades_raw[i + 1]
                 i += 2  # Skip both trades
             else:
                 i += 1  # Only skip entry
+
+            # Determine position side from entry trade
+            # BUY entry = LONG, SELL entry = SHORT
+            position_side = "LONG" if entry.side.lower() == "buy" else "SHORT"
 
             # Calculate holding period
             holding_period = None
@@ -424,7 +473,7 @@ async def get_backtest_detailed(
                     date=entry.executed_at.strftime("%Y-%m-%d"),
                     entry_time=entry.executed_at,
                     exit_time=exit_trade.executed_at if exit_trade else None,
-                    side="LONG",
+                    side=position_side,
                     quantity=entry.quantity,
                     entry_price=entry.price,
                     exit_price=exit_trade.price if exit_trade else None,
@@ -436,7 +485,7 @@ async def get_backtest_detailed(
                 )
             )
         else:
-            # Skip orphaned SELL orders
+            # Skip orphaned exit trades (shouldn't happen, but defensive)
             i += 1
 
     # Count wins/losses
