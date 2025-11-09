@@ -266,7 +266,12 @@ class BacktestRunner:
         logger.info(f"Running backtest on {len(primary_bars)} primary bars ({primary_timeframe})")
 
         # Iterate through primary timeframe bars
+        total_bars = len(primary_bars)
         for i, (timestamp, bar) in enumerate(primary_bars.iterrows()):
+            # Log progress every 50 bars
+            if i > 0 and i % 50 == 0:
+                progress_pct = (i / total_bars) * 100
+                logger.info(f"Backtest progress: {i}/{total_bars} bars ({progress_pct:.1f}%)")
             # Process this bar on all timeframes
             for timeframe in timeframes:
                 tf_bars = historical_data[timeframe]
@@ -293,16 +298,16 @@ class BacktestRunner:
 
             # Execute signals
             for signal in signals:
-                # Determine if buy or sell
-                if signal.signal_type == "BUY":
-                    # Entry signal - check if can buy
-                    if not tracker.has_position(config.symbol):
-                        # Get position size from signal metadata or use default 10 shares
-                        quantity = signal.metadata.get("position_size", 10) if signal.metadata else 10
+                execution_price = Decimal(str(bar["close"]))
 
-                        # Execute buy at next bar open (simulate realistic fill)
-                        # For simplicity, use current bar close as execution price
-                        execution_price = Decimal(str(bar["close"]))
+                # Check if we have an existing position
+                existing_position = tracker.get_position(config.symbol)
+                state = strategy.get_state(config.symbol)
+
+                if signal.signal_type == "BUY":
+                    if existing_position is None:
+                        # Opening a new LONG position
+                        quantity = signal.quantity if signal.quantity else 10
 
                         trade = tracker.execute_trade(
                             backtest_id=backtest_id,
@@ -311,25 +316,41 @@ class BacktestRunner:
                             quantity=quantity,
                             price=execution_price,
                             timestamp=timestamp,
+                            position_intent="LONG",
                             metadata=signal.metadata,
                         )
 
                         if trade:
                             # Update strategy state
-                            state = strategy.get_state(config.symbol)
                             state.in_position = True
+                            state.position_side = "LONG"
                             state.entry_price = float(execution_price)
                             state.entry_time = timestamp
                             state.position_size = quantity
 
-                elif signal.signal_type == "SELL":
-                    # Exit signal - check if have position
-                    if tracker.has_position(config.symbol):
-                        position = tracker.get_position(config.symbol)
-                        quantity = position.quantity
+                    elif existing_position.side == "SHORT":
+                        # Closing a SHORT position (buy to cover)
+                        quantity = existing_position.quantity
 
-                        # Execute sell
-                        execution_price = Decimal(str(bar["close"]))
+                        trade = tracker.execute_trade(
+                            backtest_id=backtest_id,
+                            symbol=config.symbol,
+                            side="buy",
+                            quantity=quantity,
+                            price=execution_price,
+                            timestamp=timestamp,
+                            position_intent="SHORT",  # Closing SHORT
+                            metadata=signal.metadata,
+                        )
+
+                        if trade:
+                            # Reset strategy state
+                            state.reset()
+
+                elif signal.signal_type == "SELL":
+                    if existing_position is None:
+                        # Opening a new SHORT position
+                        quantity = signal.quantity if signal.quantity else 10
 
                         trade = tracker.execute_trade(
                             backtest_id=backtest_id,
@@ -338,12 +359,35 @@ class BacktestRunner:
                             quantity=quantity,
                             price=execution_price,
                             timestamp=timestamp,
+                            position_intent="SHORT",
                             metadata=signal.metadata,
                         )
 
                         if trade:
                             # Update strategy state
-                            state = strategy.get_state(config.symbol)
+                            state.in_position = True
+                            state.position_side = "SHORT"
+                            state.entry_price = float(execution_price)
+                            state.entry_time = timestamp
+                            state.position_size = quantity
+
+                    elif existing_position.side == "LONG":
+                        # Closing a LONG position
+                        quantity = existing_position.quantity
+
+                        trade = tracker.execute_trade(
+                            backtest_id=backtest_id,
+                            symbol=config.symbol,
+                            side="sell",
+                            quantity=quantity,
+                            price=execution_price,
+                            timestamp=timestamp,
+                            position_intent="LONG",  # Closing LONG
+                            metadata=signal.metadata,
+                        )
+
+                        if trade:
+                            # Reset strategy state
                             state.reset()
 
             # Record equity curve point (every 100 bars to reduce storage)

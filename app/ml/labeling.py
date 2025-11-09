@@ -157,6 +157,91 @@ class Labeler:
         return pd.Series(labels, index=df.index, name='label')
 
     @staticmethod
+    def trend_following_labels(
+        df: pd.DataFrame,
+        ema_period: int = 20,
+        min_profit_pct: float = 0.1
+    ) -> pd.Series:
+        """
+        Label based on trend-following with EMA exits (NO entry criteria).
+
+        Labels every bar based on forward trend profitability:
+        - Look forward to find when price crosses EMA20
+        - LONG: If going up is profitable (price rises ≥min_profit_pct before crossing below EMA20)
+        - SHORT: If going down is profitable (price falls ≥min_profit_pct before crossing above EMA20)
+        - HOLD: If neither direction is profitable
+
+        This creates MORE training data by not filtering on entry conditions.
+        Entry criteria (bar reclaim, alignment, VWAP) are handled in the STRATEGY, not labels.
+
+        Exit detection:
+        - LONG exit: Close below EMA20
+        - SHORT exit: Close above EMA20
+
+        Args:
+            df: DataFrame with OHLCV data (only 'close' required)
+            ema_period: EMA period for entry/exit (default: 20)
+            min_profit_pct: Minimum profit to label as BUY/SELL (default: 0.1%)
+
+        Returns:
+            Series with labels: 1 (BUY), -1 (SELL), 0 (HOLD)
+        """
+        from app.utils.indicators import ema
+
+        labels = []
+
+        # Calculate EMA20 for exit detection
+        ema20 = ema(df, length=ema_period, column='close')
+
+        # Check required columns
+        if 'close' not in df.columns:
+            raise ValueError("Missing required column: 'close'")
+
+        for i in range(len(df) - 1):  # -1 because we need at least 1 forward bar
+            entry_price = df['close'].iloc[i]
+            current_ema20 = ema20.iloc[i]
+
+            # Look forward to find both potential exits
+            long_exit_price = None
+            short_exit_price = None
+
+            # Look ahead (up to 100 bars or end of data)
+            max_lookback = min(100, len(df) - i - 1)
+
+            for j in range(1, max_lookback + 1):
+                future_close = df['close'].iloc[i + j]
+                future_ema20 = ema20.iloc[i + j]
+
+                # LONG exit: First time close below EMA20
+                if long_exit_price is None and future_close < future_ema20:
+                    long_exit_price = future_close
+
+                # SHORT exit: First time close above EMA20
+                if short_exit_price is None and future_close > future_ema20:
+                    short_exit_price = future_close
+
+                # Stop if both exits found
+                if long_exit_price is not None and short_exit_price is not None:
+                    break
+
+            # Calculate potential P&L for both directions
+            long_pnl_pct = ((long_exit_price - entry_price) / entry_price * 100) if long_exit_price else -999
+            short_pnl_pct = ((entry_price - short_exit_price) / entry_price * 100) if short_exit_price else -999
+
+            # Label based on which direction is profitable
+            if long_pnl_pct >= min_profit_pct and long_pnl_pct > short_pnl_pct:
+                labels.append(1)  # BUY - long is profitable
+            elif short_pnl_pct >= min_profit_pct and short_pnl_pct > long_pnl_pct:
+                labels.append(-1)  # SELL - short is profitable
+            else:
+                labels.append(0)  # HOLD - neither is profitable enough
+
+        # Pad last bar with HOLD (can't look ahead)
+        labels.append(0)
+
+        return pd.Series(labels, index=df.index, name='label')
+
+    @staticmethod
     def analyze_label_distribution(labels: pd.Series) -> dict:
         """
         Analyze label distribution to check for class imbalance.

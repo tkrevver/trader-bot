@@ -264,6 +264,210 @@ def mfi(df: pd.DataFrame, length: int = 14) -> pd.Series:
     return result
 
 
+def roc(df: pd.DataFrame, length: int = 10, column: str = "close") -> pd.Series:
+    """Calculate Rate of Change (percentage change over N periods).
+
+    Args:
+        df: OHLCV DataFrame
+        length: Lookback period (default: 10)
+        column: Column to use for calculation (default: 'close')
+
+    Returns:
+        pandas Series with ROC values (percentage)
+    """
+    validate_ohlcv(df)
+    result = ta.roc(df[column], length=length)
+    if result is None:
+        return pd.Series(index=df.index, dtype=float)
+    return result
+
+
+def slope(df: pd.DataFrame, length: int = 10, column: str = "close", as_angle: bool = True) -> pd.Series:
+    """Calculate linear regression slope over N periods.
+
+    Args:
+        df: OHLCV DataFrame
+        length: Lookback period (default: 10)
+        column: Column to use for calculation (default: 'close')
+        as_angle: Return slope as angle in degrees (default: True)
+
+    Returns:
+        pandas Series with slope values (degrees if as_angle=True, else raw slope)
+    """
+    validate_ohlcv(df)
+
+    # Use pandas-ta's linear regression indicator
+    result = ta.linreg(df[column], length=length, angle=as_angle)
+
+    if result is None:
+        return pd.Series(index=df.index, dtype=float)
+
+    # pandas-ta linreg returns the regression line, not the slope
+    # We need to calculate the slope manually
+    import numpy as np
+
+    slopes = pd.Series(index=df.index, dtype=float)
+    values = df[column].values
+
+    for i in range(length - 1, len(values)):
+        # Get the last 'length' values
+        y = values[i - length + 1:i + 1]
+        x = np.arange(length)
+
+        # Calculate linear regression slope
+        if len(y) == length and not np.isnan(y).any():
+            slope_val = np.polyfit(x, y, 1)[0]
+
+            if as_angle:
+                # Convert slope to angle in degrees
+                # Normalize by the average price to get a percentage slope
+                avg_price = np.mean(y)
+                if avg_price != 0:
+                    pct_slope = (slope_val / avg_price) * 100
+                    # Convert to angle: arctan(slope) in degrees
+                    angle = np.arctan(pct_slope) * (180 / np.pi)
+                    slopes.iloc[i] = angle
+                else:
+                    slopes.iloc[i] = 0
+            else:
+                slopes.iloc[i] = slope_val
+        else:
+            slopes.iloc[i] = np.nan
+
+    return slopes
+
+
+def ema_alignment(
+    df: pd.DataFrame,
+    ema_lengths: list[int] = [2, 5, 10, 20],
+    column: str = "close"
+) -> pd.DataFrame:
+    """Check EMA alignment and measure spread strength.
+
+    Args:
+        df: OHLCV DataFrame
+        ema_lengths: List of EMA periods to check (default: [2, 5, 10, 20])
+        column: Column to use for calculation (default: 'close')
+
+    Returns:
+        DataFrame with columns:
+        - is_bullish_aligned: Boolean, True if EMAs are stacked bullishly (shortest > longest)
+        - is_bearish_aligned: Boolean, True if EMAs are stacked bearishly (shortest < longest)
+        - alignment_strength: Float, percentage spread between shortest and longest EMA
+    """
+    validate_ohlcv(df)
+
+    # Calculate all EMAs
+    emas = {}
+    for length in sorted(ema_lengths):
+        ema_series = ema(df, length=length, column=column)
+        # Handle None return from pandas-ta (insufficient data)
+        if ema_series is None:
+            emas[length] = pd.Series(0, index=df.index)
+        else:
+            # Fill NaN/None values to avoid math operation errors
+            emas[length] = ema_series.ffill().bfill().fillna(0)
+
+    result = pd.DataFrame(index=df.index)
+
+    # Check bullish alignment (2 > 5 > 10 > 20)
+    sorted_lengths = sorted(ema_lengths)
+    is_bullish = pd.Series(True, index=df.index)
+    is_bearish = pd.Series(True, index=df.index)
+
+    for i in range(len(sorted_lengths) - 1):
+        short_len = sorted_lengths[i]
+        long_len = sorted_lengths[i + 1]
+
+        # Bullish: shorter EMA > longer EMA
+        is_bullish &= emas[short_len] > emas[long_len]
+
+        # Bearish: shorter EMA < longer EMA
+        is_bearish &= emas[short_len] < emas[long_len]
+
+    result['is_bullish_aligned'] = is_bullish
+    result['is_bearish_aligned'] = is_bearish
+
+    # Calculate alignment strength (spread between shortest and longest)
+    shortest_ema = emas[min(ema_lengths)]
+    longest_ema = emas[max(ema_lengths)]
+
+    # Percentage spread
+    result['alignment_strength'] = ((shortest_ema - longest_ema) / longest_ema * 100).fillna(0)
+
+    return result
+
+
+def adx_trend_filter(
+    df: pd.DataFrame,
+    length: int = 14,
+    adx_threshold: float = 25.0
+) -> pd.DataFrame:
+    """Enhanced ADX with trend direction and filter.
+
+    Args:
+        df: OHLCV DataFrame
+        length: Lookback period (default: 14)
+        adx_threshold: ADX value above which trend is considered strong (default: 25)
+
+    Returns:
+        DataFrame with columns:
+        - ADX: Trend strength (0-100)
+        - DMP: Plus Directional Indicator (+DI)
+        - DMN: Minus Directional Indicator (-DI)
+        - trend_direction: 1 for bullish (+DI > -DI), -1 for bearish, 0 for neutral
+        - is_trending: Boolean, True if ADX > threshold
+        - trend_strength: 'strong', 'medium', 'weak'
+    """
+    validate_ohlcv(df)
+
+    # Get base ADX data
+    adx_data = adx(df, length=length)
+
+    if adx_data is None or adx_data.empty:
+        result = pd.DataFrame(index=df.index)
+        result['ADX'] = 25.0  # Neutral default
+        result['DMP'] = 50.0
+        result['DMN'] = 50.0
+        result['trend_direction'] = 0
+        result['is_trending'] = False
+        result['trend_strength'] = 'weak'
+        return result
+
+    result = adx_data.copy()
+
+    # Determine trend direction based on +DI vs -DI
+    dmp_col = [col for col in result.columns if 'DMP' in col or '+DI' in col][0] if any('DMP' in col or '+DI' in col for col in result.columns) else None
+    dmn_col = [col for col in result.columns if 'DMN' in col or '-DI' in col][0] if any('DMN' in col or '-DI' in col for col in result.columns) else None
+    adx_col = [col for col in result.columns if col.startswith('ADX')][0] if any(col.startswith('ADX') for col in result.columns) else None
+
+    if dmp_col and dmn_col:
+        result['DMP'] = result[dmp_col]
+        result['DMN'] = result[dmn_col]
+        result['trend_direction'] = 0
+        result.loc[result['DMP'] > result['DMN'], 'trend_direction'] = 1  # Bullish
+        result.loc[result['DMP'] < result['DMN'], 'trend_direction'] = -1  # Bearish
+    else:
+        result['DMP'] = 50.0
+        result['DMN'] = 50.0
+        result['trend_direction'] = 0
+
+    if adx_col:
+        result['ADX'] = result[adx_col]
+    else:
+        result['ADX'] = 25.0
+
+    # Filter: is this a trending market?
+    result['is_trending'] = result['ADX'] > adx_threshold
+
+    # Classify trend strength
+    result['trend_strength'] = 'weak'
+    result.loc[result['ADX'] > adx_threshold, 'trend_strength'] = 'medium'
+    result.loc[result['ADX'] > 40, 'trend_strength'] = 'strong'
+
+    return result
+
+
 def calculate_all_indicators(
     df: pd.DataFrame,
     indicators: Optional[list[str]] = None,

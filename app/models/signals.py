@@ -51,6 +51,8 @@ class SignalCreate(BaseModel):
 
     symbol: str
     signal_type: Literal["BUY", "SELL", "HOLD"]
+    price: Optional[Decimal] = Field(None, description="Signal price")
+    quantity: Optional[int] = Field(None, description="Signal quantity (shares)")
     confidence: Optional[Decimal] = Field(None, ge=0, le=1)
     strategy_name: str
     timeframe: Optional[str] = None

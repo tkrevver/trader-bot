@@ -1,0 +1,71 @@
+meta {
+  name: Strategy: ML Trend Following
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/backtest
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "strategy_name": "trend_following_ml_strategy",
+    "symbol": "SPY",
+    "start_date": "2025-08-05T00:00:00",
+    "end_date": "2025-11-06T23:59:59",
+    "initial_capital": "10000",
+    "commission_per_share": "0",
+    "slippage_bps": 5,
+    "config": {
+      "model_path": "models/xgboost_spy_trend_following.pkl",
+      "position_size": 10,
+      "confidence_threshold": 0.6,
+      "require_all_timeframes": true,
+      "max_bars_buffer": 200
+    }
+  }
+}
+
+docs {
+  Run a backtest for the Trend-Following ML Strategy (XGBoost classifier)
+
+  Strategy Details:
+  - Uses pre-trained XGBoost model with ~28 focused trend-following features
+  - Predicts BUY/SELL/HOLD signals on 5-minute bars
+  - Requires 1min, 5min, 15min, and 30min data for multi-timeframe slopes
+  - Filters signals by confidence threshold (default: 0.6)
+
+  Entry Criteria:
+  - LONG: Bullish EMA alignment + strong slope + reclaim EMA20 + price > VWAP
+  - SHORT: Bearish EMA alignment + strong slope + break EMA20 + price < VWAP
+
+  Exit Criteria:
+  - LONG exit: Price closes below EMA20 OR EOD (3:55 PM ET)
+  - SHORT exit: Price closes above EMA20 OR EOD (3:55 PM ET)
+
+  Features (28 total):
+  - EMA slopes (16): EMA2/5/10/20 for 1min/5min/15min/30min
+  - ADX values (4): 1min/5min/15min/30min
+  - Alignment strength (4): 1min/5min/15min/30min
+  - Bar reclaim pattern (1)
+  - Price vs VWAP (1)
+  - Time features (2): hour, minutes_since_open
+
+  Returns:
+  - Backtest ID and status
+  - Performance metrics (total return, Sharpe ratio, max drawdown, etc.)
+  - All trades executed
+  - Equity curve points
+
+  Date range: Test period (Aug 2025 - Nov 2025)
+  Initial capital: $10,000
+  No commission, 5 bps slippage
+
+  Note:
+  - Adjust confidence_threshold (0.5-0.9) to tune trade frequency
+  - Expects stronger feature importance than original ML strategy (>10% vs 4%)
+  - Bidirectional strategy (LONG and SHORT trades)
+}

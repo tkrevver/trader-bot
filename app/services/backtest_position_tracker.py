@@ -18,6 +18,7 @@ class Position:
     def __init__(
         self,
         symbol: str,
+        side: str,
         quantity: int,
         entry_price: Decimal,
         entry_time: datetime,
@@ -26,11 +27,13 @@ class Position:
 
         Args:
             symbol: Trading symbol
+            side: Position side ('LONG' or 'SHORT')
             quantity: Number of shares
             entry_price: Entry price per share
             entry_time: Entry timestamp
         """
         self.symbol = symbol
+        self.side = side  # 'LONG' or 'SHORT'
         self.quantity = quantity
         self.entry_price = entry_price
         self.entry_time = entry_time
@@ -51,9 +54,12 @@ class Position:
             current_price: Current market price
 
         Returns:
-            Unrealized P&L
+            Unrealized P&L for LONG or SHORT position
         """
-        return (current_price - self.entry_price) * Decimal(str(self.quantity))
+        if self.side == "LONG":
+            return (current_price - self.entry_price) * Decimal(str(self.quantity))
+        else:  # SHORT
+            return (self.entry_price - current_price) * Decimal(str(self.quantity))
 
 
 class BacktestPositionTracker:
@@ -111,6 +117,7 @@ class BacktestPositionTracker:
         quantity: int,
         price: Decimal,
         timestamp: datetime,
+        position_intent: str = "LONG",
         metadata: Optional[dict] = None,
     ) -> Optional[BacktestTrade]:
         """Execute a simulated trade.
@@ -118,14 +125,21 @@ class BacktestPositionTracker:
         Args:
             backtest_id: Backtest ID
             symbol: Trading symbol
-            side: 'buy' or 'sell'
+            side: 'buy' or 'sell' (execution side, not position side)
             quantity: Number of shares
             price: Execution price (before slippage)
             timestamp: Execution timestamp
+            position_intent: 'LONG' or 'SHORT' - indicates whether opening/closing a LONG or SHORT position
             metadata: Optional trade metadata
 
         Returns:
-            BacktestTrade if executed, None if insufficient cash
+            BacktestTrade if executed, None if insufficient cash/shares
+
+        Logic:
+            - BUY + LONG intent = Open/add to LONG position
+            - SELL + LONG intent = Close LONG position
+            - SELL + SHORT intent = Open/add to SHORT position
+            - BUY + SHORT intent = Close SHORT position
         """
         # Calculate slippage
         slippage_per_share = self._calculate_slippage(price, side)
@@ -137,97 +151,105 @@ class BacktestPositionTracker:
         # Calculate costs
         total_slippage = abs(slippage_per_share) * Decimal(str(quantity))
 
-        if side == "buy":
-            # Check if we have enough cash
-            cost = (execution_price * Decimal(str(quantity))) + commission
-            if cost > self.cash:
-                logger.warning(
-                    f"Insufficient cash for buy: need {cost}, have {self.cash}"
-                )
-                return None
+        # Determine if opening or closing position
+        existing_position = self.positions.get(symbol)
+        is_opening = existing_position is None
+        is_closing = existing_position is not None
 
-            # Update cash
-            self.cash -= cost
+        # OPENING A POSITION
+        if is_opening:
+            if side == "buy" and position_intent == "LONG":
+                # Open LONG position with BUY
+                cost = (execution_price * Decimal(str(quantity))) + commission
+                if cost > self.cash:
+                    logger.warning(f"Insufficient cash for LONG entry: need {cost}, have {self.cash}")
+                    return None
 
-            # Create or update position
-            if symbol in self.positions:
-                # Average into existing position (not typical for this strategy but handle it)
-                pos = self.positions[symbol]
-                total_quantity = pos.quantity + quantity
-                total_cost = (pos.entry_price * Decimal(str(pos.quantity))) + (
-                    execution_price * Decimal(str(quantity))
-                )
-                avg_price = total_cost / Decimal(str(total_quantity))
-
-                pos.quantity = total_quantity
-                pos.entry_price = avg_price
-            else:
-                # Open new position
+                self.cash -= cost
                 self.positions[symbol] = Position(
                     symbol=symbol,
+                    side="LONG",
                     quantity=quantity,
                     entry_price=execution_price,
                     entry_time=timestamp,
                 )
+                pnl = None
 
-            # Create trade record
-            trade = BacktestTrade(
-                backtest_id=backtest_id,
-                symbol=symbol,
-                side=side,
-                quantity=quantity,
-                price=execution_price,
-                executed_at=timestamp,
-                pnl=None,  # No P&L on entry
-                commission=commission,
-                slippage=total_slippage,
-                metadata=metadata,
-            )
+            elif side == "sell" and position_intent == "SHORT":
+                # Open SHORT position with SELL
+                # For short selling, we receive cash (minus commission)
+                proceeds = (execution_price * Decimal(str(quantity))) - commission
+                self.cash += proceeds
 
-        else:  # sell
-            # Check if we have a position to sell
-            if symbol not in self.positions:
-                logger.warning(f"No position to sell for {symbol}")
-                return None
+                self.positions[symbol] = Position(
+                    symbol=symbol,
+                    side="SHORT",
+                    quantity=quantity,
+                    entry_price=execution_price,
+                    entry_time=timestamp,
+                )
+                pnl = None
 
-            pos = self.positions[symbol]
-            if pos.quantity < quantity:
+            else:
                 logger.warning(
-                    f"Insufficient shares to sell: need {quantity}, have {pos.quantity}"
+                    f"Invalid opening trade: side={side}, position_intent={position_intent}. "
+                    "Use BUY+LONG or SELL+SHORT to open positions."
                 )
                 return None
 
-            # Calculate proceeds
-            proceeds = (execution_price * Decimal(str(quantity))) - commission
+        # CLOSING A POSITION
+        else:
+            pos = existing_position
+            if pos.quantity < quantity:
+                logger.warning(
+                    f"Insufficient shares to close: need {quantity}, have {pos.quantity}"
+                )
+                return None
 
-            # Calculate P&L
-            cost_basis = pos.entry_price * Decimal(str(quantity))
-            pnl = (execution_price * Decimal(str(quantity))) - cost_basis - commission
+            if pos.side == "LONG" and side == "sell":
+                # Close LONG position with SELL
+                proceeds = (execution_price * Decimal(str(quantity))) - commission
+                cost_basis = pos.entry_price * Decimal(str(quantity))
+                pnl = (execution_price * Decimal(str(quantity))) - cost_basis - commission
+                self.cash += proceeds
 
-            # Update cash
-            self.cash += proceeds
+            elif pos.side == "SHORT" and side == "buy":
+                # Close SHORT position with BUY (buy to cover)
+                cost = (execution_price * Decimal(str(quantity))) + commission
+                if cost > self.cash:
+                    logger.warning(f"Insufficient cash to cover SHORT: need {cost}, have {self.cash}")
+                    return None
+
+                proceeds = pos.entry_price * Decimal(str(quantity))  # Original sale proceeds
+                pnl = proceeds - (execution_price * Decimal(str(quantity))) - commission
+                self.cash -= cost
+
+            else:
+                logger.warning(
+                    f"Invalid closing trade: position.side={pos.side}, trade.side={side}. "
+                    "Use SELL to close LONG, BUY to close SHORT."
+                )
+                return None
 
             # Update or close position
             if pos.quantity == quantity:
-                # Close entire position
                 del self.positions[symbol]
             else:
-                # Partial close
                 pos.quantity -= quantity
 
-            # Create trade record
-            trade = BacktestTrade(
-                backtest_id=backtest_id,
-                symbol=symbol,
-                side=side,
-                quantity=quantity,
-                price=execution_price,
-                executed_at=timestamp,
-                pnl=pnl,
-                commission=commission,
-                slippage=total_slippage,
-                metadata=metadata,
-            )
+        # Create trade record
+        trade = BacktestTrade(
+            backtest_id=backtest_id,
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=execution_price,
+            executed_at=timestamp,
+            pnl=pnl,
+            commission=commission,
+            slippage=total_slippage,
+            metadata=metadata,
+        )
 
         # Track totals
         self.total_commission += commission

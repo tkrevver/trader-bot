@@ -1,0 +1,32 @@
+{
+  "features": [
+    "ema2_slope_1min",
+    "ema5_slope_1min",
+    "ema10_slope_1min",
+    "ema20_slope_1min",
+    "ema2_slope_5min",
+    "ema5_slope_5min",
+    "ema10_slope_5min",
+    "ema20_slope_5min",
+    "ema2_slope_15min",
+    "ema5_slope_15min",
+    "ema10_slope_15min",
+    "ema20_slope_15min",
+    "ema2_slope_30min",
+    "ema5_slope_30min",
+    "ema10_slope_30min",
+    "ema20_slope_30min",
+    "adx_1min",
+    "adx_5min",
+    "adx_15min",
+    "adx_30min",
+    "alignment_strength_1min",
+    "alignment_strength_5min",
+    "alignment_strength_15min",
+    "alignment_strength_30min",
+    "bar_reclaim",
+    "price_vs_vwap",
+    "hour",
+    "minutes_since_open"
+  ]
+}

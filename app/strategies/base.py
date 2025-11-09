@@ -36,6 +36,7 @@ class StrategyState(BaseModel):
 
     symbol: str = Field(..., description="Symbol being traded")
     in_position: bool = Field(default=False, description="Currently in a position")
+    position_side: Optional[str] = Field(None, description="Position side: 'LONG' or 'SHORT'")
     entry_price: Optional[float] = Field(None, description="Entry price if in position")
     entry_time: Optional[datetime] = Field(None, description="Entry timestamp")
     position_size: int = Field(default=0, description="Current position size (shares)")
@@ -46,6 +47,7 @@ class StrategyState(BaseModel):
     def reset(self) -> None:
         """Reset position state (called after exit)."""
         self.in_position = False
+        self.position_side = None
         self.entry_price = None
         self.entry_time = None
         self.position_size = 0
