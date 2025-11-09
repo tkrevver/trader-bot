@@ -14,6 +14,8 @@ params:query {
   days: 10
   ~start_date: 2025-11-01T00:00:00
   ~end_date: 2025-11-30T23:59:59
+  ~month: 2024-01
+  ~year: 2024
 }
 
 params:path {
@@ -22,26 +24,34 @@ params:path {
 
 docs {
   Manually trigger backfill of historical data
-  
+
   Automatically detects and fills any gaps in the data.
-  
-  Two ways to specify date range:
+
+  Four ways to specify date range (use only ONE):
   1. Days back (EASIER): Use days parameter (e.g., days=7)
   2. Explicit dates: Use start_date and end_date (uncomment in params)
-  
-  Query params:
-  - days: Number of days to backfill from today (1-30, optional if using dates)
-  - start_date: Start date for backfill (ISO format, optional if using days)
-  - end_date: End date for backfill (ISO format, optional if using days)
-  
-  Max range: 30 days
-  
+  3. Single month: Use month parameter (e.g., month=2024-01)
+  4. Entire year: Use year parameter (e.g., year=2024)
+
+  Query params (use only ONE):
+  - days: Number of days to backfill from today (1-30)
+  - start_date + end_date: Explicit date range (ISO format, max 30 days)
+  - month: Single month in YYYY-MM format (e.g., 2024-01)
+  - year: Entire year (e.g., 2024) - processes all 12 months sequentially
+
   Returns:
   - symbol
-  - start_date
-  - end_date
+  - start_date / end_date (for days/dates/month)
   - bars_inserted
   - gaps_found
   - gaps[] (array of gap details)
   - success
+
+  Year backfill also returns:
+  - year
+  - total_bars_inserted
+  - total_gaps_found
+  - months_processed
+  - monthly_results[] (detailed results per month)
+  - failed_months[]
 }

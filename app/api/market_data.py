@@ -180,17 +180,26 @@ async def backfill_data(
     symbol: str,
     start_date: Optional[datetime] = Query(
         None,
-        description="Start date for backfill (required if days not provided)"
+        description="Start date for backfill (required if days/month/year not provided)"
     ),
     end_date: Optional[datetime] = Query(
         None,
-        description="End date for backfill (required if days not provided)"
+        description="End date for backfill (required if days/month/year not provided)"
     ),
     days: Optional[int] = Query(
         None,
         description="Number of days to backfill from today (alternative to start_date/end_date)",
         ge=1,
         le=30
+    ),
+    month: Optional[str] = Query(
+        None,
+        description="Month to backfill in format YYYY-MM (e.g., 2024-01). Alternative to start_date/end_date/days."
+    ),
+    year: Optional[int] = Query(
+        None,
+        description="Year to backfill (e.g., 2024). Will process all 12 months. Alternative to other parameters.",
+        ge=2000
     )
 ):
     """
@@ -199,33 +208,79 @@ async def backfill_data(
     This endpoint triggers a manual backfill of historical data
     and automatically detects and fills any gaps in the data.
 
-    You can specify dates in two ways:
+    You can specify the date range in multiple ways:
     1. Explicit dates: Provide both start_date and end_date
     2. Days back: Provide days parameter (e.g., days=7 for last 7 days)
+    3. Single month: Provide month parameter (e.g., month=2024-01)
+    4. Entire year: Provide year parameter (e.g., year=2024) - processes all 12 months sequentially
 
     Args:
         symbol: Trading symbol (e.g., "SPY")
-        start_date: Start date for backfill (optional if using days)
-        end_date: End date for backfill (optional if using days)
-        days: Number of days to backfill from today (optional if using start_date/end_date)
+        start_date: Start date for backfill (optional if using days/month/year)
+        end_date: End date for backfill (optional if using days/month/year)
+        days: Number of days to backfill from today (optional if using start_date/end_date/month/year)
+        month: Month to backfill in YYYY-MM format (optional if using other parameters)
+        year: Year to backfill (optional if using other parameters)
 
     Returns:
         dict: Backfill results including gap detection
     """
     try:
-        logger.info(
-            "Manual backfill triggered via API",
-            extra={"symbol": symbol, "days": days}
-        )
+        # Count how many parameters were provided
+        params_provided = sum([
+            start_date is not None and end_date is not None,
+            days is not None,
+            month is not None,
+            year is not None
+        ])
+
+        if params_provided == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Must provide one of: (start_date AND end_date), days, month, or year"
+            )
+
+        if params_provided > 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide only ONE of: (start_date AND end_date), days, month, or year"
+            )
 
         data_ingestion = get_data_ingestion_service()
-        result = await data_ingestion.backfill_with_validation(
-            symbol=symbol.upper(),
-            start_date=start_date,
-            end_date=end_date,
-            days=days,
-            max_days=30
-        )
+
+        # Route to appropriate backfill method
+        if year is not None:
+            logger.info(
+                "Year backfill triggered via API",
+                extra={"symbol": symbol, "year": year}
+            )
+            result = await data_ingestion.backfill_year(
+                symbol=symbol.upper(),
+                year=year
+            )
+
+        elif month is not None:
+            logger.info(
+                "Month backfill triggered via API",
+                extra={"symbol": symbol, "month": month}
+            )
+            result = await data_ingestion.backfill_month(
+                symbol=symbol.upper(),
+                month=month
+            )
+
+        else:
+            logger.info(
+                "Manual backfill triggered via API",
+                extra={"symbol": symbol, "days": days}
+            )
+            result = await data_ingestion.backfill_with_validation(
+                symbol=symbol.upper(),
+                start_date=start_date,
+                end_date=end_date,
+                days=days,
+                max_days=30
+            )
 
         return result
 
