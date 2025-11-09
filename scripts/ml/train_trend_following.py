@@ -219,6 +219,7 @@ def train_model(X_train, y_train, X_test, y_test, class_weights):
         'colsample_bytree': 0.8,
         'random_state': 42,
         'tree_method': 'hist',
+        'n_jobs': 8,
         'eval_metric': 'mlogloss'
     }
 

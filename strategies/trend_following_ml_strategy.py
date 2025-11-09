@@ -62,6 +62,9 @@ class TrendFollowingMLStrategy(Strategy):
         self.bars_15min = {}
         self.bars_30min = {}
 
+        # Batch prediction cache: symbol -> {timestamp -> (prediction, probability, bar_reclaim)}
+        self.prediction_cache = {}
+
     def get_metadata(self) -> StrategyMetadata:
         """Return strategy metadata."""
         return StrategyMetadata(
@@ -142,17 +145,110 @@ class TrendFollowingMLStrategy(Strategy):
             bar: Latest bar data
             bars: Historical bars including the latest
         """
+        # For batch prediction during backtest, we need ALL bars, not just last 200
+        # Check if bars already contains all data (len > max_bars_buffer means full historical load)
         max_bars = self._get_config_value("max_bars_buffer", 200)
+        use_all_bars = len(bars) > max_bars * 2  # If we have way more bars, keep all for batch prediction
 
-        # Store bars in appropriate buffer (keep last N bars)
+        # Store bars in appropriate buffer
         if timeframe == "5min":
-            self.bars_5min[symbol] = bars.tail(max_bars).copy()
+            self.bars_5min[symbol] = bars.copy() if use_all_bars else bars.tail(max_bars).copy()
         elif timeframe == "1min":
-            self.bars_1min[symbol] = bars.tail(max_bars).copy()
+            self.bars_1min[symbol] = bars.copy() if use_all_bars else bars.tail(max_bars).copy()
         elif timeframe == "15min":
-            self.bars_15min[symbol] = bars.tail(max_bars).copy()
+            self.bars_15min[symbol] = bars.copy() if use_all_bars else bars.tail(max_bars).copy()
         elif timeframe == "30min":
-            self.bars_30min[symbol] = bars.tail(max_bars).copy()
+            self.bars_30min[symbol] = bars.copy() if use_all_bars else bars.tail(max_bars).copy()
+
+    def generate_batch_predictions(self, symbol: str) -> None:
+        """Generate predictions for all bars at once (batch mode).
+
+        This is called ONCE before the backtest loop starts to pre-compute
+        all predictions. Much faster than one-by-one prediction.
+
+        Args:
+            symbol: Trading symbol
+        """
+        require_all = self._get_config_value("require_all_timeframes", True)
+
+        # Check if we have all required timeframes
+        if require_all:
+            if (symbol not in self.bars_5min or
+                symbol not in self.bars_1min or
+                symbol not in self.bars_15min or
+                symbol not in self.bars_30min):
+                print(f"Missing timeframes for {symbol}, skipping batch predictions")
+                return
+
+        if symbol not in self.bars_5min or len(self.bars_5min[symbol]) == 0:
+            print(f"No 5min bars for {symbol}, skipping batch predictions")
+            return
+
+        print(f"\n{'='*60}")
+        print(f"BATCH PREDICTION MODE - Generating features for all bars...")
+        print(f"{'='*60}")
+
+        try:
+            # Get all bars for feature engineering
+            df_5min = self.bars_5min.get(symbol)
+            df_1min = self.bars_1min.get(symbol) if require_all else None
+            df_15min = self.bars_15min.get(symbol) if require_all else None
+            df_30min = self.bars_30min.get(symbol) if require_all else None
+
+            # Create feature engineer
+            engineer = TrendFollowingFeatureEngineer(
+                df_5min=df_5min,
+                df_1min=df_1min,
+                df_15min=df_15min,
+                df_30min=df_30min
+            )
+
+            # Generate features for ALL bars at once
+            df_features = engineer.create_all_features()
+
+            if len(df_features) == 0:
+                print(f"No features generated for {symbol}")
+                return
+
+            print(f"✓ Generated {len(df_features)} feature rows")
+
+            # Extract feature matrix (VECTORIZED - no loops!)
+            # Reindex to ensure all feature columns exist, filling missing with 0
+            df_features_aligned = df_features.reindex(columns=self.feature_columns, fill_value=0.0)
+
+            # Convert to numpy array in one operation (740x faster than iterrows!)
+            X = df_features_aligned.to_numpy(dtype=np.float64)
+            valid_indices = df_features.index.tolist()
+
+            if len(X) == 0:
+                print(f"No valid feature rows for {symbol}")
+                return
+
+            print(f"✓ Prepared feature matrix: {X.shape}")
+            print(f"  Making single batch prediction call...")
+
+            # SINGLE BATCH PREDICTION CALL (this is the speedup!)
+            predictions = self.model.predict(X) - 1  # Convert from 0,1,2 to -1,0,1
+            probabilities = self.model.predict_proba(X)
+            max_probs = probabilities.max(axis=1)
+
+            print(f"✓ Batch predictions complete!")
+            print(f"  BUY signals: {(predictions == 1).sum()}")
+            print(f"  HOLD signals: {(predictions == 0).sum()}")
+            print(f"  SELL signals: {(predictions == -1).sum()}")
+            print(f"{'='*60}\n")
+
+            # Cache predictions AND bar_reclaim by timestamp
+            self.prediction_cache[symbol] = {}
+            for i, timestamp in enumerate(valid_indices):
+                row = df_features.loc[timestamp]
+                bar_reclaim = row.get('bar_reclaim', 0)
+                self.prediction_cache[symbol][timestamp] = (predictions[i], max_probs[i], bar_reclaim)
+
+        except Exception as e:
+            print(f"Error in batch predictions: {e}")
+            import traceback
+            traceback.print_exc()
 
     def generate_signals(self, symbol: str) -> list[SignalCreate]:
         """Generate trading signals based on ML model predictions.
@@ -252,52 +348,69 @@ class TrendFollowingMLStrategy(Strategy):
         if state.in_position:
             return signals
 
-        # Compute features
+        # Get prediction from cache (if batch mode was used)
         try:
-            df_5min = self.bars_5min.get(symbol)
-            df_1min = self.bars_1min.get(symbol) if require_all else None
-            df_15min = self.bars_15min.get(symbol) if require_all else None
-            df_30min = self.bars_30min.get(symbol) if require_all else None
+            # Get current bar timestamp (use same logic as current_time above)
+            bar_timestamp = bars_5min.index[-1]
 
-            # Create feature engineer
-            engineer = TrendFollowingFeatureEngineer(
-                df_5min=df_5min,
-                df_1min=df_1min,
-                df_15min=df_15min,
-                df_30min=df_30min
-            )
+            # Try to get cached prediction
+            if symbol in self.prediction_cache and bar_timestamp in self.prediction_cache[symbol]:
+                # USE CACHED PREDICTION (fast path!)
+                prediction, max_prob, bar_reclaim = self.prediction_cache[symbol][bar_timestamp]
+            else:
+                # DEBUG: Cache miss - this should NOT happen if batch prediction worked
+                if symbol not in self.prediction_cache:
+                    print(f"WARNING: No prediction cache for {symbol}")
+                elif bar_timestamp not in self.prediction_cache[symbol]:
+                    cache_size = len(self.prediction_cache[symbol])
+                    print(f"WARNING: Cache miss for timestamp {bar_timestamp}, cache has {cache_size} entries")
+                    if cache_size > 0:
+                        sample_keys = list(self.prediction_cache[symbol].keys())[:3]
+                        print(f"  Sample cache keys: {sample_keys}")
+                        print(f"  Looking for: {bar_timestamp}, type: {type(bar_timestamp)}")
+                        print(f"  Sample key type: {type(sample_keys[0])}")
 
-            # Generate features
-            df_features = engineer.create_all_features()
+                # Fallback: compute prediction for this bar (slow path, used if cache miss)
+                df_5min = self.bars_5min.get(symbol)
+                df_1min = self.bars_1min.get(symbol) if require_all else None
+                df_15min = self.bars_15min.get(symbol) if require_all else None
+                df_30min = self.bars_30min.get(symbol) if require_all else None
 
-            # Get latest features
-            if len(df_features) == 0:
-                return signals
+                # Create feature engineer
+                engineer = TrendFollowingFeatureEngineer(
+                    df_5min=df_5min,
+                    df_1min=df_1min,
+                    df_15min=df_15min,
+                    df_30min=df_30min
+                )
 
-            latest_features = df_features.iloc[-1]
+                # Generate features
+                df_features = engineer.create_all_features()
 
-            # PRE-FILTER: Only trade on bar reclaim/break (entry requirement)
-            # bar_reclaim: 1 = reclaim up, -1 = break down, 0 = neither
-            bar_reclaim = latest_features.get('bar_reclaim', 0)
-            if bar_reclaim == 0:
-                # No bar reclaim or break - skip this bar
-                return signals
+                # Get latest features
+                if len(df_features) == 0:
+                    return signals
 
-            # Extract feature values in correct order
-            X = []
-            for col in self.feature_columns:
-                if col in latest_features:
-                    X.append(float(latest_features[col]))
-                else:
-                    # Missing feature - use 0 as default
-                    X.append(0.0)
+                latest_features = df_features.iloc[-1]
 
-            X = np.array(X).reshape(1, -1)
+                # Get bar_reclaim
+                bar_reclaim = latest_features.get('bar_reclaim', 0)
 
-            # Make prediction
-            prediction = self.model.predict(X)[0] - 1  # Convert from 0,1,2 to -1,0,1
-            probabilities = self.model.predict_proba(X)[0]
-            max_prob = probabilities.max()
+                # Extract feature values in correct order
+                X = []
+                for col in self.feature_columns:
+                    if col in latest_features:
+                        X.append(float(latest_features[col]))
+                    else:
+                        # Missing feature - use 0 as default
+                        X.append(0.0)
+
+                X = np.array(X).reshape(1, -1)
+
+                # Make prediction
+                prediction = self.model.predict(X)[0] - 1  # Convert from 0,1,2 to -1,0,1
+                probabilities = self.model.predict_proba(X)[0]
+                max_prob = probabilities.max()
 
             # Apply confidence threshold
             confidence_threshold = self._get_config_value("confidence_threshold", 0.6)

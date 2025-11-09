@@ -101,6 +101,20 @@ class BacktestRunner:
             # Fetch historical data for all required timeframes
             historical_data = await self._fetch_historical_data(config, strategy)
 
+            # Pre-populate strategy bar buffers for batch prediction (if strategy supports it)
+            if hasattr(strategy, 'generate_batch_predictions'):
+                logger.info("Preparing batch predictions...")
+                # Populate all bar buffers with complete historical data
+                for timeframe, bars in historical_data.items():
+                    strategy.on_bar(
+                        symbol=config.symbol,
+                        timeframe=timeframe,
+                        bar=bars.iloc[-1],  # Latest bar (not used but required)
+                        bars=bars,  # Full historical data
+                    )
+                # Generate batch predictions for all bars at once
+                strategy.generate_batch_predictions(config.symbol)
+
             # Run event-driven backtest
             await self._run_event_loop(backtest.id, config, strategy, tracker, historical_data)
 
