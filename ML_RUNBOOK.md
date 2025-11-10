@@ -37,6 +37,18 @@ The ML trading pipeline consists of:
 
 ## Data Preparation
 
+### Step 0: macOS Setup
+
+**macOS users only:** Install OpenMP library required by XGBoost:
+
+```bash
+brew install libomp
+```
+
+This is not required on Linux or Windows.
+
+---
+
 ### Step 1: Export Data from Database
 
 Export OHLCV bars from PostgreSQL to Parquet files for efficient ML processing.
